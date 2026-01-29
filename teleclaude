@@ -3,7 +3,9 @@
 # TeleClaude - Run from anywhere
 # Usage: teleclaude [command] [options]
 
-TELECLAUDE_HOME="${TELECLAUDE_HOME:-/Users/kyrylokyrykov/Developer/projects/experiments/teleclaude}"
+# Determine script directory (resolve symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+TELECLAUDE_HOME="${TELECLAUDE_HOME:-$SCRIPT_DIR}"
 PORT="${TELECLAUDE_PORT:-8765}"
 SESSION_NAME=""
 CLAUDE_ARGS=""
@@ -22,6 +24,8 @@ show_help() {
     echo "  stop               Stop the server"
     echo "  status             Show server status"
     echo "  url                Show the ngrok URL"
+    echo "  vscode [session]   Open VS Code in browser for a session"
+    echo "  vscode-install     Install code-server binary"
     echo ""
     echo "Options:"
     echo "  -s, --session NAME Session name (default: 'default')"
@@ -38,6 +42,7 @@ show_help() {
     echo "  teleclaude new -s api ~/api -- --model sonnet  # New session with model"
     echo "  teleclaude sessions                        # List all sessions"
     echo "  teleclaude attach -s myproject             # Attach to named session"
+    echo "  teleclaude vscode                          # Open VS Code for default session"
     echo ""
     echo "Press Ctrl+] to detach from session (server keeps running)"
 }
@@ -48,6 +53,72 @@ check_venv() {
         python3 -m venv "$TELECLAUDE_HOME/venv"
         source "$TELECLAUDE_HOME/venv/bin/activate"
         pip install -q -r "$TELECLAUDE_HOME/requirements.txt"
+    fi
+}
+
+# Get auth token for API calls (handles password-protected servers)
+get_auth_token() {
+    # Check if server requires auth
+    local auth_status=$(curl -s "http://localhost:$PORT/api/auth/status" 2>/dev/null)
+    local auth_required=$(echo "$auth_status" | python3 -c "import sys,json; print(json.load(sys.stdin).get('auth_required', False))" 2>/dev/null)
+
+    if [ "$auth_required" != "True" ]; then
+        echo ""
+        return 0
+    fi
+
+    # Try to load saved password
+    local saved_password=""
+    if [ -f "$TELECLAUDE_HOME/.teleclaude.password" ]; then
+        saved_password=$(cat "$TELECLAUDE_HOME/.teleclaude.password")
+    fi
+
+    if [ -z "$saved_password" ]; then
+        echo "Error: Server requires password but none saved. Restart server or provide password." >&2
+        return 1
+    fi
+
+    # Get token
+    local response=$(curl -s -X POST "http://localhost:$PORT/api/auth/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"password\": \"$saved_password\"}" 2>/dev/null)
+
+    local token=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token', ''))" 2>/dev/null)
+
+    if [ -z "$token" ]; then
+        echo "Error: Failed to authenticate" >&2
+        return 1
+    fi
+
+    echo "$token"
+}
+
+# Make authenticated API call
+api_call() {
+    local method="$1"
+    local endpoint="$2"
+    local data="$3"
+
+    local token=$(get_auth_token)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
+    local auth_header=""
+    if [ -n "$token" ]; then
+        auth_header="-H \"Cookie: teleclaude_token=$token\""
+    fi
+
+    if [ "$method" = "GET" ]; then
+        eval curl -s $auth_header "http://localhost:$PORT$endpoint"
+    elif [ "$method" = "POST" ]; then
+        if [ -n "$data" ]; then
+            eval curl -s -X POST $auth_header -H \"Content-Type: application/json\" -d "'$data'" "http://localhost:$PORT$endpoint"
+        else
+            eval curl -s -X POST $auth_header "http://localhost:$PORT$endpoint"
+        fi
+    elif [ "$method" = "DELETE" ]; then
+        eval curl -s -X DELETE $auth_header "http://localhost:$PORT$endpoint"
     fi
 }
 
@@ -84,6 +155,14 @@ cmd_start() {
     export TELECLAUDE_SESSION="$session"
     export TELECLAUDE_CLAUDE_ARGS="$CLAUDE_ARGS"
     export TELECLAUDE_PASSWORD="$PASSWORD"
+
+    # Save password for CLI commands (if set)
+    if [ -n "$PASSWORD" ]; then
+        echo "$PASSWORD" > "$TELECLAUDE_HOME/.teleclaude.password"
+        chmod 600 "$TELECLAUDE_HOME/.teleclaude.password"
+    else
+        rm -f "$TELECLAUDE_HOME/.teleclaude.password"
+    fi
 
     # Start server with nohup to survive terminal close
     nohup uvicorn server.main:app --host 0.0.0.0 --port $PORT > "$TELECLAUDE_HOME/.teleclaude.log" 2>&1 &
@@ -151,7 +230,7 @@ cmd_new() {
     workdir="$(cd "$workdir" && pwd)"  # Get absolute path
     local session="${SESSION_NAME:-session_$(date +%s)}"
 
-    if ! curl -s "http://localhost:$PORT/api/status" > /dev/null 2>&1; then
+    if ! curl -s "http://localhost:$PORT/api/auth/status" > /dev/null 2>&1; then
         echo "Error: TeleClaude server is not running"
         echo "Start it first with: teleclaude start"
         exit 1
@@ -164,12 +243,17 @@ cmd_new() {
 
     # URL encode the arguments
     local encoded_args=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$CLAUDE_ARGS'))")
-    local url="http://localhost:$PORT/api/sessions/$session?working_dir=$workdir"
+    local endpoint="/api/sessions/$session?working_dir=$workdir"
     if [ -n "$CLAUDE_ARGS" ]; then
-        url="$url&claude_args=$encoded_args"
+        endpoint="$endpoint&claude_args=$encoded_args"
     fi
 
-    response=$(curl -s -X POST "$url")
+    response=$(api_call POST "$endpoint")
+
+    if [ $? -ne 0 ]; then
+        echo "Failed to create session: authentication error"
+        exit 1
+    fi
 
     if echo "$response" | grep -q '"status":"created"'; then
         echo "Session '$session' created successfully!"
@@ -223,7 +307,7 @@ cmd_attach() {
 }
 
 cmd_sessions() {
-    if ! curl -s "http://localhost:$PORT/api/status" > /dev/null 2>&1; then
+    if ! curl -s "http://localhost:$PORT/api/auth/status" > /dev/null 2>&1; then
         echo "TeleClaude is not running"
         echo "Start it with: teleclaude start"
         exit 1
@@ -238,7 +322,7 @@ cmd_sessions() {
         ngrok_url=$(cat "$TELECLAUDE_HOME/.teleclaude.url")
     fi
 
-    curl -s "http://localhost:$PORT/api/sessions" | python3 -c "
+    api_call GET "/api/sessions" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 current = data.get('current', 'default')
@@ -287,14 +371,15 @@ cmd_stop() {
     pkill -f "uvicorn server.main:app.*--port $PORT" 2>/dev/null
     pkill -f "ngrok http $PORT" 2>/dev/null
     rm -f "$TELECLAUDE_HOME/.teleclaude.url"
+    rm -f "$TELECLAUDE_HOME/.teleclaude.password"
 
     echo "Done"
 }
 
 cmd_status() {
-    if curl -s "http://localhost:$PORT/api/status" > /dev/null 2>&1; then
+    if curl -s "http://localhost:$PORT/api/auth/status" > /dev/null 2>&1; then
         echo "TeleClaude is running"
-        curl -s "http://localhost:$PORT/api/status" | python3 -c "
+        api_call GET "/api/status" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
 print(f\"  Current session: {data.get('current_session', 'default')}\")
@@ -324,6 +409,160 @@ cmd_url() {
         else
             echo "TeleClaude is not running"
         fi
+    fi
+}
+
+cmd_vscode() {
+    local session="${1:-${SESSION_NAME:-default}}"
+
+    if ! curl -s "http://localhost:$PORT/api/auth/status" > /dev/null 2>&1; then
+        echo "Error: TeleClaude server is not running"
+        echo "Start it first with: teleclaude start"
+        exit 1
+    fi
+
+    # Check if code-server is installed
+    if [ ! -f "$TELECLAUDE_HOME/bin/code-server" ] && ! command -v code-server &> /dev/null; then
+        echo "code-server is not installed."
+        echo "Install it with: teleclaude vscode-install"
+        exit 1
+    fi
+
+    echo "Starting VS Code for session '$session'..."
+
+    # Start code-server via API
+    response=$(api_call POST "/api/vscode/$session")
+
+    if [ $? -ne 0 ]; then
+        echo "Failed to start VS Code: authentication error"
+        exit 1
+    fi
+
+    if echo "$response" | grep -q '"status":"running"'; then
+        # Get the URL
+        local base_url="http://localhost:$PORT"
+        if [ -f "$TELECLAUDE_HOME/.teleclaude.url" ]; then
+            base_url=$(cat "$TELECLAUDE_HOME/.teleclaude.url")
+        fi
+
+        local vscode_url="$base_url/vscode/$session/"
+        echo "VS Code is ready!"
+        echo ""
+        echo "URL: $vscode_url"
+        echo ""
+
+        # Try to open in browser
+        if command -v open &> /dev/null; then
+            open "$vscode_url"
+        elif command -v xdg-open &> /dev/null; then
+            xdg-open "$vscode_url"
+        else
+            echo "Open this URL in your browser to access VS Code."
+        fi
+    else
+        echo "Failed to start VS Code: $response"
+        exit 1
+    fi
+}
+
+cmd_vscode_install() {
+    echo "Installing code-server..."
+
+    # Detect platform and architecture
+    local os=""
+    local arch=""
+
+    case "$(uname -s)" in
+        Darwin) os="macos" ;;
+        Linux) os="linux" ;;
+        *)
+            echo "Unsupported operating system: $(uname -s)"
+            exit 1
+            ;;
+    esac
+
+    case "$(uname -m)" in
+        x86_64|amd64) arch="amd64" ;;
+        arm64|aarch64) arch="arm64" ;;
+        *)
+            echo "Unsupported architecture: $(uname -m)"
+            exit 1
+            ;;
+    esac
+
+    echo "Detected: $os-$arch"
+
+    # Get latest version from GitHub API
+    echo "Fetching latest version..."
+    local version=$(curl -s "https://api.github.com/repos/coder/code-server/releases/latest" | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
+
+    if [ -z "$version" ]; then
+        echo "Failed to get latest version. Using fallback version."
+        version="4.96.4"
+    fi
+
+    echo "Version: $version"
+
+    # Construct download URL
+    local filename="code-server-${version}-${os}-${arch}.tar.gz"
+    local url="https://github.com/coder/code-server/releases/download/v${version}/${filename}"
+
+    echo "Downloading from: $url"
+
+    # Create bin directory
+    mkdir -p "$TELECLAUDE_HOME/bin"
+    local tmp_dir=$(mktemp -d)
+
+    # Download and extract
+    if curl -fL "$url" -o "$tmp_dir/$filename"; then
+        echo "Extracting..."
+        tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
+
+        # Find and copy the binary
+        local extracted_dir="$tmp_dir/code-server-${version}-${os}-${arch}"
+        if [ -f "$extracted_dir/bin/code-server" ]; then
+            cp "$extracted_dir/bin/code-server" "$TELECLAUDE_HOME/bin/code-server"
+            chmod +x "$TELECLAUDE_HOME/bin/code-server"
+
+            # Also copy lib directory if it exists (needed for some versions)
+            if [ -d "$extracted_dir/lib" ]; then
+                cp -r "$extracted_dir/lib" "$TELECLAUDE_HOME/bin/"
+            fi
+
+            echo ""
+            echo "code-server installed successfully!"
+            echo "Location: $TELECLAUDE_HOME/bin/code-server"
+            echo ""
+            echo "You can now use: teleclaude vscode"
+        else
+            echo "Error: Could not find code-server binary in extracted files"
+            ls -la "$tmp_dir"
+            exit 1
+        fi
+    else
+        echo "Error: Failed to download code-server"
+        exit 1
+    fi
+
+    # Cleanup
+    rm -rf "$tmp_dir"
+}
+
+cmd_vscode_stop() {
+    local session="${1:-${SESSION_NAME:-default}}"
+
+    if ! curl -s "http://localhost:$PORT/api/auth/status" > /dev/null 2>&1; then
+        echo "Error: TeleClaude server is not running"
+        exit 1
+    fi
+
+    echo "Stopping VS Code for session '$session'..."
+    response=$(api_call DELETE "/api/vscode/$session")
+
+    if echo "$response" | grep -q '"status":"stopped"'; then
+        echo "VS Code stopped."
+    else
+        echo "Response: $response"
     fi
 }
 
@@ -382,6 +621,15 @@ case "${1:-start}" in
         ;;
     url|u)
         cmd_url
+        ;;
+    vscode|code|vs)
+        cmd_vscode "$2"
+        ;;
+    vscode-install|code-install)
+        cmd_vscode_install
+        ;;
+    vscode-stop|code-stop)
+        cmd_vscode_stop "$2"
         ;;
     *)
         echo "Unknown command: $1"

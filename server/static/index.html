@@ -116,6 +116,23 @@
             color: var(--accent);
         }
 
+        .btn.vscode-running {
+            background: #007acc;
+            border-color: #007acc;
+            color: white;
+        }
+
+        .btn.vscode-loading {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
+        #vscodeBtn {
+            font-weight: 600;
+            font-size: 0.65rem;
+            min-width: 32px;
+        }
+
         #sessionSelect {
             background: var(--bg-primary);
             border: 1px solid var(--border);
@@ -779,6 +796,9 @@
             <div class="status-item" id="clientCount">
                 <span>1 client</span>
             </div>
+            <button class="btn no-keyboard" id="vscodeBtn" onclick="openVSCode()" title="Open VS Code">
+                <span id="vscodeBtnIcon">VS</span>
+            </button>
             <button class="btn no-keyboard" id="tileBtn" onclick="toggleTileView()" title="Tile View">⊞</button>
             <button class="btn no-keyboard" id="notifyBtn" onclick="toggleNotifications()" title="Browser Notifications">🔕</button>
             <button class="btn no-keyboard" onclick="setupNtfy()" title="Setup ntfy.sh push notifications">📱</button>
@@ -985,6 +1005,7 @@
                 term.focus();
                 loadSessions();
                 loadNtfySettings();
+                checkVSCodeStatus();
             };
 
             ws.onclose = (event) => {
@@ -1543,6 +1564,7 @@
         setInterval(() => {
             updateClientCount();
             loadSessions();
+            checkVSCodeStatus();
         }, 5000);
 
         // Prevent keyboard from showing when clicking UI buttons
@@ -2037,6 +2059,92 @@
         }
 
         // ========== End Authentication Functions ==========
+
+        // ========== VS Code Functions ==========
+
+        let vscodeRunning = {};  // session_id -> boolean
+
+        async function checkVSCodeStatus() {
+            try {
+                const res = await fetch(`/api/vscode/${currentSession}/status`);
+                const data = await res.json();
+                vscodeRunning[currentSession] = data.status === 'running';
+                updateVSCodeButton();
+            } catch (e) {
+                console.error('Failed to check VS Code status:', e);
+            }
+        }
+
+        function updateVSCodeButton() {
+            const btn = document.getElementById('vscodeBtn');
+            const icon = document.getElementById('vscodeBtnIcon');
+            if (!btn || !icon) return;
+
+            if (vscodeRunning[currentSession]) {
+                btn.classList.add('vscode-running');
+                btn.title = 'VS Code running - Click to open';
+                icon.textContent = 'VS';
+            } else {
+                btn.classList.remove('vscode-running');
+                btn.title = 'Open VS Code';
+                icon.textContent = 'VS';
+            }
+        }
+
+        async function openVSCode() {
+            const btn = document.getElementById('vscodeBtn');
+            const icon = document.getElementById('vscodeBtnIcon');
+
+            // If already running, just open it
+            if (vscodeRunning[currentSession]) {
+                window.open(`/vscode/${currentSession}/`, '_blank');
+                return;
+            }
+
+            // Show loading state
+            btn.classList.add('vscode-loading');
+            icon.textContent = '...';
+
+            try {
+                const res = await fetch(`/api/vscode/${currentSession}`, {
+                    method: 'POST'
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.status === 'running') {
+                    vscodeRunning[currentSession] = true;
+                    updateVSCodeButton();
+
+                    // Wait a bit for code-server to be ready
+                    await new Promise(r => setTimeout(r, 2000));
+
+                    // Open in new tab
+                    window.open(`/vscode/${currentSession}/`, '_blank');
+                } else {
+                    const error = data.detail || 'Failed to start VS Code';
+                    alert(`Error: ${error}\n\nMake sure code-server is installed:\ntelecloud vscode-install`);
+                }
+            } catch (e) {
+                console.error('Failed to start VS Code:', e);
+                alert('Failed to start VS Code. Check console for details.');
+            } finally {
+                btn.classList.remove('vscode-loading');
+                updateVSCodeButton();
+            }
+        }
+
+        async function stopVSCode() {
+            try {
+                await fetch(`/api/vscode/${currentSession}`, { method: 'DELETE' });
+                vscodeRunning[currentSession] = false;
+                updateVSCodeButton();
+            } catch (e) {
+                console.error('Failed to stop VS Code:', e);
+            }
+        }
+
+        // ========== End VS Code Functions ==========
 
         // Initialize on load
         document.addEventListener('DOMContentLoaded', async () => {
