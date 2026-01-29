@@ -204,31 +204,37 @@ class PTYSession:
             self._notification_buffer = b""
             return
 
-        # Remove ANSI codes
+        # Remove ANSI codes and control characters
         clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
-        clean_text = re.sub(r'\r', '', clean_text)
-        clean_text = re.sub(r'\n+', ' ', clean_text)
+        clean_text = re.sub(r'\x1b\][^\x07]*\x07', '', clean_text)  # OSC sequences
+        clean_text = re.sub(r'[\x00-\x1f\x7f]', ' ', clean_text)  # Control chars
         clean_text = re.sub(r'\s+', ' ', clean_text).strip()
 
-        if len(clean_text) < 10:
+        if len(clean_text) < 5:
             self._notification_buffer = b""
             return
 
-        # Get the last meaningful part of Claude's output
-        message = clean_text[-300:]  # Last 300 chars
+        # Determine notification type based on content patterns
+        waiting_patterns = [
+            (r'\?\s*$', 'Claude is asking a question'),
+            (r'\[Y/n\]', 'Claude needs confirmation'),
+            (r'\(y/n\)', 'Claude needs confirmation'),
+            (r'proceed\?', 'Claude is asking to proceed'),
+            (r'continue\?', 'Claude is asking to continue'),
+            (r'select.*:', 'Claude is waiting for selection'),
+            (r'choose.*:', 'Claude is waiting for your choice'),
+            (r'enter.*:', 'Claude is waiting for input'),
+        ]
 
-        # Try to get the last sentence or question
-        sentence_match = re.search(r'[^.!?]*[.!?]\s*$', message)
-        if sentence_match:
-            message = sentence_match.group(0).strip()
+        message = "Claude has an update"
 
-        if len(message) > 200:
-            message = '...' + message[-200:]
+        for pattern, msg in waiting_patterns:
+            if re.search(pattern, clean_text, re.IGNORECASE):
+                message = msg
+                break
 
-        if len(message) > 10:
-            self._send_notification(message)
-            self._last_notification_time = now
-
+        self._send_notification(message)
+        self._last_notification_time = now
         self._notification_buffer = b""
 
     def _send_notification(self, message: str):
