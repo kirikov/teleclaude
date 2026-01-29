@@ -15,11 +15,13 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
 
+import httpx
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Depends, Cookie
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse, StreamingResponse
 
 from .pty_session import PTYSession, SessionClient, SessionManager
+from .vscode_manager import get_vscode_manager, VSCodeManager
 
 # Working directory (can be configured)
 WORKING_DIR = os.environ.get("TELECLAUDE_WORKDIR", os.getcwd())
@@ -81,13 +83,24 @@ async def check_auth(request: Request, token: Optional[str] = Cookie(default=Non
 # Session manager singleton
 session_manager = SessionManager()
 
+# VS Code manager singleton
+vscode_manager = get_vscode_manager(PASSWORD)
+
 # Active WebSocket connections for broadcasting
 ws_connections: dict[str, WebSocket] = {}
+
+# HTTP client for reverse proxy
+http_client: Optional[httpx.AsyncClient] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
+    global http_client
+
+    # Startup: create HTTP client for reverse proxy
+    http_client = httpx.AsyncClient(timeout=30.0)
+
     # Startup: create session with configured name
     try:
         # Build command with args
@@ -103,11 +116,22 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"Warning: Could not start session '{SESSION_NAME}': {e}")
 
+    # Start VS Code cleanup task
+    vscode_manager.start_cleanup_task()
+
     yield
 
     # Shutdown: cleanup all sessions
     for session_id in list(session_manager._sessions.keys()):
         session_manager.cleanup_session(session_id)
+
+    # Shutdown: stop all VS Code instances
+    vscode_manager.stop_cleanup_task()
+    vscode_manager.stop_all()
+
+    # Shutdown: close HTTP client
+    if http_client:
+        await http_client.aclose()
 
 
 app = FastAPI(title="TeleClaude", description="Shared Claude Code Terminal", lifespan=lifespan)
@@ -390,6 +414,210 @@ async def get_attach_command():
         "command": f"python -m server.attach",
         "description": "Run this command in another terminal to attach to the same session"
     }
+
+
+# ========== VS Code API Endpoints ==========
+
+@app.post("/api/vscode/{session_id}")
+async def start_vscode(session_id: str, auth: bool = Depends(check_auth)):
+    """Start code-server for a session."""
+    # Get the session's working directory
+    session = session_manager.get_session(session_id)
+    if not session:
+        session = session_manager.get_default_session()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    work_dir = session.working_dir
+
+    try:
+        instance = vscode_manager.start(session_id, work_dir)
+        return {
+            "status": "running",
+            "session_id": session_id,
+            "port": instance.port,
+            "working_dir": work_dir,
+            "url": f"/vscode/{session_id}/"
+        }
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/vscode/{session_id}")
+async def stop_vscode(session_id: str, auth: bool = Depends(check_auth)):
+    """Stop code-server for a session."""
+    if vscode_manager.stop(session_id):
+        return {"status": "stopped", "session_id": session_id}
+    else:
+        return {"status": "not_running", "session_id": session_id}
+
+
+@app.get("/api/vscode/{session_id}/status")
+async def vscode_status(session_id: str, auth: bool = Depends(check_auth)):
+    """Get code-server status for a session."""
+    instance = vscode_manager.get_instance(session_id)
+    if instance:
+        return {
+            "status": "running",
+            "session_id": session_id,
+            "port": instance.port,
+            "working_dir": instance.working_dir,
+            "idle_seconds": int(instance.idle_seconds()),
+            "url": f"/vscode/{session_id}/"
+        }
+    else:
+        return {"status": "stopped", "session_id": session_id}
+
+
+@app.get("/api/vscode")
+async def list_vscode_instances(auth: bool = Depends(check_auth)):
+    """List all running code-server instances."""
+    return {"instances": vscode_manager.list_instances()}
+
+
+# ========== VS Code Reverse Proxy ==========
+
+async def proxy_to_vscode(request: Request, session_id: str, path: str = ""):
+    """Proxy requests to code-server."""
+    instance = vscode_manager.get_instance(session_id)
+    if not instance:
+        raise HTTPException(status_code=503, detail="VS Code not running for this session")
+
+    # Update activity timestamp
+    instance.touch()
+
+    # Build target URL
+    target_url = f"http://127.0.0.1:{instance.port}/{path}"
+    if request.query_params:
+        target_url += f"?{request.query_params}"
+
+    # Get request body if present
+    body = await request.body() if request.method in ["POST", "PUT", "PATCH"] else None
+
+    # Forward headers (excluding host)
+    headers = dict(request.headers)
+    headers.pop("host", None)
+
+    try:
+        response = await http_client.request(
+            method=request.method,
+            url=target_url,
+            headers=headers,
+            content=body,
+            follow_redirects=False
+        )
+
+        # Handle redirects - rewrite Location header
+        response_headers = dict(response.headers)
+        if "location" in response_headers:
+            location = response_headers["location"]
+            # Rewrite absolute URLs to go through proxy
+            if location.startswith(f"http://127.0.0.1:{instance.port}"):
+                location = location.replace(
+                    f"http://127.0.0.1:{instance.port}",
+                    f"/vscode/{session_id}"
+                )
+                response_headers["location"] = location
+
+        # Remove hop-by-hop headers
+        for header in ["transfer-encoding", "connection", "keep-alive"]:
+            response_headers.pop(header, None)
+
+        return StreamingResponse(
+            content=response.iter_bytes(),
+            status_code=response.status_code,
+            headers=response_headers,
+            media_type=response.headers.get("content-type")
+        )
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="VS Code server not responding")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.api_route("/vscode/{session_id}/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"])
+async def vscode_proxy(request: Request, session_id: str, path: str = ""):
+    """Reverse proxy to code-server."""
+    # Check auth via cookie or query param
+    token = request.cookies.get("teleclaude_token") or request.query_params.get("token")
+    if is_auth_required() and not verify_token(token):
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    return await proxy_to_vscode(request, session_id, path)
+
+
+@app.api_route("/vscode/{session_id}", methods=["GET"])
+async def vscode_proxy_root(request: Request, session_id: str):
+    """Redirect to add trailing slash for code-server root."""
+    return JSONResponse(
+        status_code=307,
+        content={"detail": "Redirecting"},
+        headers={"Location": f"/vscode/{session_id}/"}
+    )
+
+
+# ========== VS Code WebSocket Proxy ==========
+
+@app.websocket("/vscode/{session_id}/{path:path}")
+async def vscode_websocket_proxy(websocket: WebSocket, session_id: str, path: str = ""):
+    """WebSocket proxy to code-server."""
+    # Check auth
+    token = websocket.query_params.get("token")
+    if is_auth_required() and not verify_token(token):
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
+    instance = vscode_manager.get_instance(session_id)
+    if not instance:
+        await websocket.close(code=4004, reason="VS Code not running")
+        return
+
+    await websocket.accept()
+    instance.touch()
+
+    # Connect to code-server WebSocket
+    target_url = f"ws://127.0.0.1:{instance.port}/{path}"
+    if websocket.query_params:
+        target_url += f"?{websocket.query_params}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            # Use websockets library for proper WebSocket proxying
+            import websockets
+            async with websockets.connect(target_url) as ws_target:
+                async def forward_to_target():
+                    try:
+                        while True:
+                            data = await websocket.receive()
+                            if "text" in data:
+                                await ws_target.send(data["text"])
+                            elif "bytes" in data:
+                                await ws_target.send(data["bytes"])
+                    except WebSocketDisconnect:
+                        pass
+
+                async def forward_from_target():
+                    try:
+                        async for message in ws_target:
+                            instance.touch()
+                            if isinstance(message, str):
+                                await websocket.send_text(message)
+                            else:
+                                await websocket.send_bytes(message)
+                    except websockets.exceptions.ConnectionClosed:
+                        pass
+
+                await asyncio.gather(forward_to_target(), forward_from_target())
+    except Exception as e:
+        print(f"[VSCode WS] Error: {e}")
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass
 
 
 # Mount static files
