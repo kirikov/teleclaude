@@ -150,6 +150,50 @@ class TerminalClient:
                 await self.ws.close()
 
 
+def authenticate(host: str, port: int, password: str) -> str:
+    """Authenticate and get a token."""
+    import urllib.request
+    import urllib.error
+    import json
+
+    url = f"http://{host}:{port}/api/auth/login"
+    data = json.dumps({"password": password}).encode('utf-8')
+
+    try:
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            return result.get('token', '')
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            print("Authentication failed: Invalid password")
+        else:
+            print(f"Authentication failed: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"Authentication failed: {e}")
+        sys.exit(1)
+
+
+def check_auth_required(host: str, port: int) -> bool:
+    """Check if authentication is required."""
+    import urllib.request
+    import json
+
+    url = f"http://{host}:{port}/api/auth/status"
+    try:
+        with urllib.request.urlopen(url, timeout=5) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            return result.get('auth_required', False)
+    except:
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Attach to a TeleClaude shared terminal session"
@@ -174,8 +218,32 @@ def main():
         default="default",
         help="Session name to attach to (default: 'default')"
     )
+    parser.add_argument(
+        "--password", "-P",
+        default=os.environ.get("TELECLAUDE_PASSWORD", ""),
+        help="Password for authentication (or set TELECLAUDE_PASSWORD env var)"
+    )
 
     args = parser.parse_args()
+
+    # Determine host and port
+    host = args.host
+    port = args.port
+    token = ""
+
+    # Check if auth is required and authenticate
+    if check_auth_required(host, port):
+        password = args.password
+        if not password:
+            import getpass
+            password = getpass.getpass("Password: ")
+
+        if password:
+            print("Authenticating...")
+            token = authenticate(host, port, password)
+        else:
+            print("Password required but not provided")
+            sys.exit(1)
 
     if args.url:
         url = args.url
@@ -183,10 +251,14 @@ def main():
         if "session_id=" not in url:
             separator = "&" if "?" in url else "?"
             url = f"{url}{separator}session_id={args.session}"
+        if token:
+            url = f"{url}&token={token}"
     else:
-        url = f"ws://{args.host}:{args.port}/ws/terminal?session_id={args.session}"
+        url = f"ws://{host}:{port}/ws/terminal?session_id={args.session}"
+        if token:
+            url = f"{url}&token={token}"
 
-    print(f"Connecting to {url}...")
+    print(f"Connecting to {args.session}@{host}:{port}...")
     print("Press Ctrl+] to detach (session keeps running)\n")
 
     client = TerminalClient(url)

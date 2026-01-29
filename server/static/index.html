@@ -539,9 +539,108 @@
                 height: 8px;
             }
         }
+
+        /* Login form styles */
+        .login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .login-overlay.hidden {
+            display: none;
+        }
+
+        .login-form {
+            background: var(--bg-secondary);
+            padding: 2rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            width: 100%;
+            max-width: 320px;
+            margin: 1rem;
+        }
+
+        .login-form h2 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            font-size: 1.25rem;
+        }
+
+        .login-form p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .login-form input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .login-form input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .login-form button {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .login-form button:hover {
+            opacity: 0.9;
+        }
+
+        .login-form button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .login-error {
+            color: #ef4444;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .login-error.visible {
+            display: block;
+        }
     </style>
 </head>
 <body>
+    <!-- Login overlay -->
+    <div class="login-overlay hidden" id="loginOverlay">
+        <form class="login-form" onsubmit="handleLogin(event)">
+            <h2>🔐 TeleClaude</h2>
+            <p>This session is password protected</p>
+            <div class="login-error" id="loginError">Invalid password</div>
+            <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password" required>
+            <button type="submit" id="loginButton">Login</button>
+        </form>
+    </div>
+
     <header>
         <div class="logo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -623,6 +722,10 @@
         const maxReconnectAttempts = 5;
         let currentSession = new URLSearchParams(window.location.search).get('session') || 'default';
         let intentionalClose = false;  // Flag to prevent auto-reconnect on session switch
+
+        // Authentication
+        let authToken = null;
+        let authRequired = false;
 
         // Tile view state
         let tileViewActive = false;
@@ -729,7 +832,11 @@
             }
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
+            let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
+            // Add auth token if required
+            if (authToken) {
+                wsUrl += `&token=${encodeURIComponent(authToken)}`;
+            }
             console.log('Connecting to:', wsUrl);
 
             ws = new WebSocket(wsUrl);
@@ -746,9 +853,17 @@
                 loadNtfySettings();
             };
 
-            ws.onclose = () => {
-                console.log('Disconnected from session:', currentSession);
+            ws.onclose = (event) => {
+                console.log('Disconnected from session:', currentSession, 'code:', event.code);
                 updateStatus(false);
+
+                // Check for auth failure (code 4001)
+                if (event.code === 4001) {
+                    console.log('Authentication required');
+                    showLoginOverlay();
+                    return;
+                }
+
                 // Only auto-reconnect if this wasn't an intentional close (session switch)
                 if (!intentionalClose) {
                     attemptReconnect();
@@ -1404,7 +1519,11 @@
         function connectTileWebSocket(sessionId, tileTerm) {
             return new Promise((resolve) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+                let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+                // Add auth token if required
+                if (authToken) {
+                    wsUrl += `&token=${encodeURIComponent(authToken)}`;
+                }
 
                 const tileWs = new WebSocket(wsUrl);
                 tileWs.binaryType = 'arraybuffer';
@@ -1555,12 +1674,104 @@
 
         // ========== End Tile View Functions ==========
 
+        // ========== Authentication Functions ==========
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/auth/status');
+                const data = await res.json();
+
+                authRequired = data.auth_required;
+
+                if (authRequired && !data.authenticated) {
+                    showLoginOverlay();
+                    return false;
+                }
+
+                // Get token from cookie if authenticated
+                if (data.authenticated) {
+                    // Token is in httpOnly cookie, we just need to track that we're authenticated
+                    authToken = getCookie('teleclaude_token') || 'cookie-auth';
+                }
+
+                return true;
+            } catch (e) {
+                console.error('Failed to check auth:', e);
+                return true;  // Assume no auth on error
+            }
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }
+
+        function showLoginOverlay() {
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('loginPassword').focus();
+        }
+
+        function hideLoginOverlay() {
+            document.getElementById('loginOverlay').classList.add('hidden');
+            document.getElementById('loginError').classList.remove('visible');
+            document.getElementById('loginPassword').value = '';
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+
+            const password = document.getElementById('loginPassword').value;
+            const button = document.getElementById('loginButton');
+            const errorEl = document.getElementById('loginError');
+
+            button.disabled = true;
+            button.textContent = 'Logging in...';
+            errorEl.classList.remove('visible');
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    authToken = data.token;
+                    hideLoginOverlay();
+
+                    // Initialize terminal after successful login
+                    initTerminal();
+                } else {
+                    errorEl.textContent = 'Invalid password';
+                    errorEl.classList.add('visible');
+                    document.getElementById('loginPassword').select();
+                }
+            } catch (e) {
+                console.error('Login failed:', e);
+                errorEl.textContent = 'Login failed. Please try again.';
+                errorEl.classList.add('visible');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Login';
+            }
+        }
+
+        // ========== End Authentication Functions ==========
+
         // Initialize on load
-        document.addEventListener('DOMContentLoaded', () => {
-            initTerminal();
+        document.addEventListener('DOMContentLoaded', async () => {
             updateNotificationButton();
             setupNoKeyboardButtons();
             setupKeyboardDetection();
+
+            // Check auth before initializing terminal
+            const authenticated = await checkAuth();
+            if (authenticated) {
+                initTerminal();
+            }
         });
     </script>
 </body>
