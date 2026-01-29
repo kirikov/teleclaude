@@ -171,15 +171,33 @@ async def websocket_terminal(websocket: WebSocket, session_id: str = Query(defau
     """WebSocket endpoint for terminal access."""
     await websocket.accept()
 
+    # Determine which session to connect to
     sid = session_id or SESSION_NAME
-    session = session_manager.get_session(sid)
-    if not session:
-        session = session_manager.get_default_session()
 
-    if not session or not session.is_running():
-        await websocket.send_json({"type": "error", "message": f"No active session: {sid}"})
+    # Get the specific session - don't fallback to avoid mixing outputs
+    session = session_manager.get_session(sid)
+
+    # Only fallback to default if no session_id was specified
+    if not session and not session_id:
+        session = session_manager.get_default_session()
+        if session:
+            # Find the actual session ID for this session
+            for s_id, s in session_manager._sessions.items():
+                if s is session:
+                    sid = s_id
+                    break
+
+    if not session:
+        await websocket.send_json({"type": "error", "message": f"Session not found: {sid}"})
         await websocket.close()
         return
+
+    if not session.is_running():
+        await websocket.send_json({"type": "error", "message": f"Session not running: {sid}"})
+        await websocket.close()
+        return
+
+    print(f"[WS] Client connecting to session: {sid}")
 
     client_id = str(uuid.uuid4())[:8]
     ws_connections[client_id] = websocket
@@ -231,6 +249,9 @@ async def websocket_terminal(websocket: WebSocket, session_id: str = Query(defau
 
             # Handle binary data (terminal input from xterm.js)
             if "bytes" in message:
+                # Log to verify correct session routing
+                if len(message["bytes"]) < 20:
+                    print(f"[WS] Input from {client_id} to session {sid}: {message['bytes']!r}")
                 session.write(message["bytes"])
 
             # Handle text data (JSON commands or plain text)
@@ -247,13 +268,14 @@ async def websocket_terminal(websocket: WebSocket, session_id: str = Query(defau
                     session.write(text.encode())
 
     except WebSocketDisconnect:
-        pass
+        print(f"[WS] Client {client_id} disconnected from session: {sid}")
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        print(f"[WS] Error for client {client_id} on session {sid}: {e}")
     finally:
         sender_task.cancel()
         session.remove_client(client_id)
         ws_connections.pop(client_id, None)
+        print(f"[WS] Client {client_id} removed from session: {sid}")
 
 
 @app.get("/api/attach-command")

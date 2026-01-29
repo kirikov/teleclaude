@@ -462,6 +462,7 @@
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
         let currentSession = new URLSearchParams(window.location.search).get('session') || 'default';
+        let intentionalClose = false;  // Flag to prevent auto-reconnect on session switch
 
         // Notification settings
         let notificationsEnabled = localStorage.getItem('notifications') === 'true';
@@ -554,8 +555,17 @@
         }
 
         function connect() {
+            // Close any existing connection first
+            if (ws && ws.readyState !== WebSocket.CLOSED) {
+                console.log('Closing existing connection before reconnect');
+                intentionalClose = true;
+                ws.close();
+                ws = null;
+            }
+
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
+            console.log('Connecting to:', wsUrl);
 
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'arraybuffer';
@@ -572,9 +582,13 @@
             };
 
             ws.onclose = () => {
-                console.log('Disconnected');
+                console.log('Disconnected from session:', currentSession);
                 updateStatus(false);
-                attemptReconnect();
+                // Only auto-reconnect if this wasn't an intentional close (session switch)
+                if (!intentionalClose) {
+                    attemptReconnect();
+                }
+                intentionalClose = false;  // Reset flag
             };
 
             ws.onerror = (error) => {
@@ -864,20 +878,30 @@
         function switchSession(sessionId) {
             if (sessionId === currentSession) return;
 
-            currentSession = sessionId;
+            console.log('Switching from session', currentSession, 'to', sessionId);
+
             // Update URL without reload
             const url = new URL(window.location);
             url.searchParams.set('session', sessionId);
             window.history.pushState({}, '', url);
 
-            // Reconnect to new session
+            // Close old connection (set flag to prevent auto-reconnect)
+            intentionalClose = true;
             if (ws) {
                 ws.close();
+                ws = null;
             }
+
+            // Update current session AFTER closing old connection
+            currentSession = sessionId;
+            reconnectAttempts = 0;  // Reset reconnect counter
+
             term.clear();
             term.write(`\r\nSwitching to session: ${sessionId}...\r\n\r\n`);
             showOverlay(`Connecting to session: ${sessionId}`);
-            setTimeout(connect, 500);
+
+            // Connect to new session
+            setTimeout(connect, 300);
         }
 
         function showOverlay(message) {

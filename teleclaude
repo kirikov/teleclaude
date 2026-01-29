@@ -72,13 +72,16 @@ cmd_start() {
     pkill -f "ngrok http $PORT" 2>/dev/null || true
     sleep 1
 
-    # Start server in background with logs redirected
+    # Start server in background, fully detached from terminal
     cd "$TELECLAUDE_HOME"
     export TELECLAUDE_WORKDIR="$workdir"
     export TELECLAUDE_SESSION="$session"
     export TELECLAUDE_CLAUDE_ARGS="$CLAUDE_ARGS"
-    uvicorn server.main:app --host 0.0.0.0 --port $PORT > "$TELECLAUDE_HOME/.teleclaude.log" 2>&1 &
+
+    # Start server with nohup to survive terminal close
+    nohup uvicorn server.main:app --host 0.0.0.0 --port $PORT > "$TELECLAUDE_HOME/.teleclaude.log" 2>&1 &
     SERVER_PID=$!
+    disown $SERVER_PID 2>/dev/null || true
     echo $SERVER_PID > "$TELECLAUDE_HOME/.teleclaude.pid"
 
     # Wait for server to be ready
@@ -98,10 +101,11 @@ cmd_start() {
 
     echo "Local:  http://localhost:$PORT"
 
-    # Start ngrok if available
+    # Start ngrok if available (also detached)
     if command -v ngrok &> /dev/null; then
-        ngrok http $PORT --log=stdout > /dev/null &
+        nohup ngrok http $PORT --log=stdout > /dev/null 2>&1 &
         NGROK_PID=$!
+        disown $NGROK_PID 2>/dev/null || true
         echo $NGROK_PID > "$TELECLAUDE_HOME/.teleclaude.ngrok.pid"
         sleep 2
 
