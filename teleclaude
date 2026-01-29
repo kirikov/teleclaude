@@ -3,7 +3,9 @@
 # TeleClaude - Run from anywhere
 # Usage: teleclaude [command] [options]
 
-TELECLAUDE_HOME="${TELECLAUDE_HOME:-/Users/kyrylokyrykov/Developer/projects/experiments/teleclaude}"
+# Determine script directory (resolve symlinks)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "$0" 2>/dev/null || echo "$0")")" && pwd)"
+TELECLAUDE_HOME="${TELECLAUDE_HOME:-$SCRIPT_DIR}"
 PORT="${TELECLAUDE_PORT:-8765}"
 SESSION_NAME=""
 CLAUDE_ARGS=""
