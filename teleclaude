@@ -518,20 +518,25 @@ cmd_vscode_install() {
         echo "Extracting..."
         tar -xzf "$tmp_dir/$filename" -C "$tmp_dir"
 
-        # Find and copy the binary
+        # Install to code-server subdirectory
         local extracted_dir="$tmp_dir/code-server-${version}-${os}-${arch}"
-        if [ -f "$extracted_dir/bin/code-server" ]; then
-            cp "$extracted_dir/bin/code-server" "$TELECLAUDE_HOME/bin/code-server"
-            chmod +x "$TELECLAUDE_HOME/bin/code-server"
+        local install_dir="$TELECLAUDE_HOME/code-server"
 
-            # Also copy lib directory if it exists (needed for some versions)
-            if [ -d "$extracted_dir/lib" ]; then
-                cp -r "$extracted_dir/lib" "$TELECLAUDE_HOME/bin/"
-            fi
+        if [ -f "$extracted_dir/bin/code-server" ]; then
+            # Remove old installation
+            rm -rf "$install_dir"
+
+            # Copy entire code-server directory
+            cp -r "$extracted_dir" "$install_dir"
+            chmod +x "$install_dir/bin/code-server"
+
+            # Create symlink in bin/ for convenience
+            mkdir -p "$TELECLAUDE_HOME/bin"
+            ln -sf "$install_dir/bin/code-server" "$TELECLAUDE_HOME/bin/code-server"
 
             echo ""
             echo "code-server installed successfully!"
-            echo "Location: $TELECLAUDE_HOME/bin/code-server"
+            echo "Location: $install_dir"
             echo ""
             echo "You can now use: teleclaude vscode"
         else
