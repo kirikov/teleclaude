@@ -14,6 +14,7 @@ Multiple clients (terminal + webapp) can connect to the same Claude Code session
 - **Multiple Sessions**: Run multiple Claude sessions and switch between them
 - **Mobile Support**: Mobile-friendly UI with touch controls
 - **Push Notifications**: Get notified when Claude needs your attention
+- **VS Code Integration**: Open code-server in browser alongside your terminal
 
 ## Quick Start
 
@@ -61,6 +62,8 @@ teleclaude stop
 | `teleclaude status` | Show server status |
 | `teleclaude url` | Show ngrok URL |
 | `teleclaude stop` | Stop the server |
+| `teleclaude vscode` | Open VS Code in browser |
+| `teleclaude vscode-install` | Install code-server binary |
 
 **Detach:** Press `Ctrl+]` to detach without stopping the session or server.
 
@@ -200,6 +203,44 @@ teleclaude attach https://xxxx.ngrok-free.app
 
 **Detach:** Press `Ctrl+]` to detach without stopping the session.
 
+## VS Code Integration
+
+TeleClaude includes built-in VS Code support via [code-server](https://github.com/coder/code-server), allowing you to edit files in a full VS Code editor alongside your terminal session.
+
+### Installation
+
+```bash
+# Install code-server (one-time setup)
+teleclaude vscode-install
+```
+
+This downloads and installs code-server to `teleclaude/bin/`.
+
+### Usage
+
+```bash
+# Open VS Code for the current session
+teleclaude vscode
+
+# Open VS Code for a specific session
+teleclaude vscode -s myproject
+```
+
+You can also click the **VS** button in the web UI header to launch VS Code.
+
+### How It Works
+
+- Code-server runs on a local port and is proxied through TeleClaude
+- Each session can have its own VS Code instance
+- VS Code opens in the session's working directory
+- Idle instances are automatically stopped after 30 minutes
+- If password protection is enabled, VS Code uses the same password
+
+### Requirements
+
+- code-server binary (installed via `teleclaude vscode-install`)
+- Or system-wide code-server: `brew install code-server`
+
 ## Configuration
 
 ### Environment Variables
@@ -225,11 +266,13 @@ teleclaude attach https://xxxx.ngrok-free.app
 teleclaude/
 ├── server/
 │   ├── __init__.py
-│   ├── main.py          # FastAPI server
-│   ├── pty_session.py   # PTY session manager
-│   ├── attach.py        # Terminal attach client
+│   ├── main.py            # FastAPI server
+│   ├── pty_session.py     # PTY session manager
+│   ├── attach.py          # Terminal attach client
+│   ├── vscode_manager.py  # VS Code instance manager
 │   └── static/
-│       └── index.html   # Web UI
+│       └── index.html     # Web UI
+├── bin/                   # Local binaries (code-server)
 ├── teleclaude           # CLI script
 ├── requirements.txt
 └── README.md
