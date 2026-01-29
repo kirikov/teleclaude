@@ -697,8 +697,8 @@
     </div>
 
     <div class="mobile-toolbar" id="mobileToolbar">
-        <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;Scr</button>
-        <button class="no-keyboard" onclick="scrollViewport(10)" title="Scroll Down">&#8681;Scr</button>
+        <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;</button>
+        <button class="no-keyboard" onclick="scrollToBottom()" title="Scroll to Bottom">&#8615;</button>
         <button class="no-keyboard" onclick="sendKey('Escape')" title="Escape">Esc</button>
         <button class="no-keyboard" onclick="sendKey('Tab')" title="Tab">Tab</button>
         <div class="key-arrows">
@@ -1239,6 +1239,15 @@
         function scrollViewport(lines) {
             if (term) {
                 term.scrollLines(lines);
+            }
+        }
+
+        // Scroll to the very bottom of the terminal
+        function scrollToBottom() {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                tiles[focusedTileSession].term.scrollToBottom();
+            } else if (term) {
+                term.scrollToBottom();
             }
         }
 
