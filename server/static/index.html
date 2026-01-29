@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <meta name="theme-color" content="#1a1a2e">
     <title>TeleClaude - Shared Terminal</title>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
@@ -23,6 +23,10 @@
             --border: #27272a;
         }
 
+        html {
+            background: var(--bg-secondary);
+        }
+
         body {
             font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
             background: var(--bg-primary);
@@ -31,6 +35,13 @@
             display: flex;
             flex-direction: column;
             overflow: hidden;
+        }
+
+        /* iPhone with Dynamic Island/notch - add top spacing */
+        @media screen and (max-width: 480px) {
+            body {
+                padding-top: 50px;
+            }
         }
 
         header {
@@ -103,6 +114,21 @@
         .btn:hover {
             border-color: var(--accent);
             color: var(--accent);
+        }
+
+        #sessionSelect {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.3rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+        }
+
+        #sessionSelect:focus {
+            outline: none;
+            border-color: var(--accent);
         }
 
         #terminal-container {
@@ -320,7 +346,7 @@
 
         @media (max-width: 480px) {
             header {
-                padding: 0.3rem 0.4rem;
+                padding: 0.5rem;
             }
 
             .logo h1 {
@@ -328,7 +354,7 @@
             }
 
             .status-bar {
-                gap: 0.3rem;
+                gap: 0.25rem;
             }
 
             #clientCount {
@@ -339,9 +365,19 @@
                 display: none;
             }
 
+            #sessionSelector {
+                display: none;
+            }
+
             .btn {
-                font-size: 0.55rem;
-                padding: 0.25rem 0.4rem;
+                font-size: 0.7rem;
+                padding: 0.25rem 0.35rem;
+                min-width: auto;
+            }
+
+            /* Hide text buttons on small screens, keep emoji buttons */
+            .btn-text {
+                display: none;
             }
 
             #terminal-container {
@@ -367,11 +403,18 @@
                 <div class="status-dot" id="statusDot"></div>
                 <span id="statusText">Connecting...</span>
             </div>
+            <div class="status-item" id="sessionSelector">
+                <select id="sessionSelect" onchange="switchSession(this.value)">
+                    <option value="default">default</option>
+                </select>
+            </div>
             <div class="status-item" id="clientCount">
                 <span>1 client</span>
             </div>
-            <button class="btn" onclick="toggleAttachInfo()">Attach from Terminal</button>
-            <button class="btn" onclick="restartSession()">Restart Session</button>
+            <button class="btn no-keyboard" id="notifyBtn" onclick="toggleNotifications()" title="Browser Notifications">🔕</button>
+            <button class="btn no-keyboard" onclick="setupNtfy()" title="Setup ntfy.sh push notifications">📱</button>
+            <button class="btn btn-text no-keyboard" onclick="toggleAttachInfo()">Attach</button>
+            <button class="btn btn-text no-keyboard" onclick="restartSession()">Restart</button>
         </div>
     </header>
 
@@ -395,18 +438,18 @@
     </div>
 
     <div class="mobile-toolbar" id="mobileToolbar">
-        <button onclick="scrollViewport(-10)" title="Scroll Up">&#8679;Scr</button>
-        <button onclick="scrollViewport(10)" title="Scroll Down">&#8681;Scr</button>
-        <button onclick="sendKey('Escape')" title="Escape">Esc</button>
-        <button onclick="sendKey('Tab')" title="Tab">Tab</button>
+        <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;Scr</button>
+        <button class="no-keyboard" onclick="scrollViewport(10)" title="Scroll Down">&#8681;Scr</button>
+        <button class="no-keyboard" onclick="sendKey('Escape')" title="Escape">Esc</button>
+        <button class="no-keyboard" onclick="sendKey('Tab')" title="Tab">Tab</button>
         <div class="key-arrows">
-            <button onclick="sendKey('ArrowUp')" title="Up">&#9650;</button>
-            <button onclick="sendKey('ArrowDown')" title="Down">&#9660;</button>
-            <button onclick="sendKey('ArrowLeft')" title="Left">&#9664;</button>
-            <button onclick="sendKey('ArrowRight')" title="Right">&#9654;</button>
+            <button class="no-keyboard" onclick="sendKey('ArrowUp')" title="Up">&#9650;</button>
+            <button class="no-keyboard" onclick="sendKey('ArrowDown')" title="Down">&#9660;</button>
+            <button class="no-keyboard" onclick="sendKey('ArrowLeft')" title="Left">&#9664;</button>
+            <button class="no-keyboard" onclick="sendKey('ArrowRight')" title="Right">&#9654;</button>
         </div>
-        <button onclick="sendCtrlC()" title="Ctrl+C">^C</button>
-        <button onclick="sendKey('Enter')" title="Enter">&#9166;</button>
+        <button class="no-keyboard" onclick="sendCtrlC()" title="Ctrl+C">^C</button>
+        <button class="no-keyboard" onclick="sendKey('Enter')" title="Enter">&#9166;</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -418,6 +461,17 @@
         let fitAddon = null;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 5;
+        let currentSession = new URLSearchParams(window.location.search).get('session') || 'default';
+
+        // Notification settings
+        let notificationsEnabled = localStorage.getItem('notifications') === 'true';
+        let lastOutputTime = 0;
+        let outputBuffer = '';
+        let idleTimer = null;
+        const IDLE_THRESHOLD = 2000; // 2 seconds of no output = Claude might be waiting
+
+        // ntfy.sh topic for push notifications (optional)
+        let ntfyTopic = localStorage.getItem('ntfyTopic') || '';
 
         // Detect mobile and calculate appropriate font size
         // Claude Code TUI needs ~80 columns minimum
@@ -501,18 +555,19 @@
 
         function connect() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/terminal`;
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
 
             ws = new WebSocket(wsUrl);
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {
-                console.log('Connected');
+                console.log('Connected to session:', currentSession);
                 updateStatus(true);
                 hideOverlay();
                 reconnectAttempts = 0;
                 sendResize();
                 term.focus();
+                loadSessions();
             };
 
             ws.onclose = () => {
@@ -527,13 +582,150 @@
             };
 
             ws.onmessage = (event) => {
+                let text;
                 if (event.data instanceof ArrayBuffer) {
-                    const text = new TextDecoder().decode(event.data);
-                    term.write(text);
+                    text = new TextDecoder().decode(event.data);
                 } else {
-                    term.write(event.data);
+                    text = event.data;
                 }
+                term.write(text);
+
+                // Track output for notifications
+                handleOutputForNotifications(text);
             };
+        }
+
+        function handleOutputForNotifications(text) {
+            if (!notificationsEnabled && !ntfyTopic) return;
+            if (document.hasFocus()) return; // Don't notify if tab is focused
+
+            outputBuffer += text;
+            lastOutputTime = Date.now();
+
+            // Clear existing timer
+            if (idleTimer) clearTimeout(idleTimer);
+
+            // Set timer to check for idle (Claude finished/waiting)
+            idleTimer = setTimeout(() => {
+                checkAndNotify();
+            }, IDLE_THRESHOLD);
+        }
+
+        function checkAndNotify() {
+            if (document.hasFocus()) {
+                outputBuffer = '';
+                return;
+            }
+
+            // Patterns that suggest Claude is waiting for input
+            const waitingPatterns = [
+                /\?\s*$/,                    // Ends with question mark
+                /\[Y\/n\]/i,                 // Yes/No prompt
+                /\(y\/n\)/i,                 // Yes/No prompt
+                /press enter/i,              // Press enter prompt
+                /continue\?/i,               // Continue prompt
+                /proceed\?/i,                // Proceed prompt
+                /select.*:/i,                // Selection prompt
+                /choose.*:/i,                // Choose prompt
+                /enter.*:/i,                 // Enter prompt
+                /\>\s*$/,                    // Prompt character
+            ];
+
+            // Check if output suggests Claude is waiting
+            const recentOutput = outputBuffer.slice(-500); // Last 500 chars
+            const isWaiting = waitingPatterns.some(p => p.test(recentOutput));
+
+            if (isWaiting || outputBuffer.length > 100) {
+                // Determine notification message
+                let message = 'Claude needs your attention';
+                if (/\?\s*$/.test(recentOutput)) {
+                    message = 'Claude is asking a question';
+                } else if (/\[Y\/n\]/i.test(recentOutput) || /\(y\/n\)/i.test(recentOutput)) {
+                    message = 'Claude needs confirmation';
+                }
+
+                sendNotification(message);
+            }
+
+            outputBuffer = '';
+        }
+
+        async function sendNotification(message) {
+            // Browser notification
+            if (notificationsEnabled && Notification.permission === 'granted') {
+                new Notification('TeleClaude', {
+                    body: message,
+                    icon: '/favicon.ico',
+                    tag: 'teleclaude-notification',
+                    renotify: true
+                });
+            }
+
+            // ntfy.sh notification
+            if (ntfyTopic) {
+                try {
+                    await fetch(`https://ntfy.sh/${ntfyTopic}`, {
+                        method: 'POST',
+                        body: message,
+                        headers: { 'Title': 'TeleClaude' }
+                    });
+                } catch (e) {
+                    console.error('ntfy error:', e);
+                }
+            }
+        }
+
+        async function requestNotificationPermission() {
+            if (!('Notification' in window)) {
+                alert('This browser does not support notifications');
+                return false;
+            }
+
+            if (Notification.permission === 'granted') {
+                return true;
+            }
+
+            if (Notification.permission !== 'denied') {
+                const permission = await Notification.requestPermission();
+                return permission === 'granted';
+            }
+
+            return false;
+        }
+
+        async function toggleNotifications() {
+            if (!notificationsEnabled) {
+                const granted = await requestNotificationPermission();
+                if (granted) {
+                    notificationsEnabled = true;
+                    localStorage.setItem('notifications', 'true');
+                    updateNotificationButton();
+                    sendNotification('Notifications enabled!');
+                }
+            } else {
+                notificationsEnabled = false;
+                localStorage.setItem('notifications', 'false');
+                updateNotificationButton();
+            }
+        }
+
+        function updateNotificationButton() {
+            const btn = document.getElementById('notifyBtn');
+            if (btn) {
+                btn.textContent = notificationsEnabled ? '🔔' : '🔕';
+                btn.title = notificationsEnabled ? 'Notifications ON' : 'Notifications OFF';
+            }
+        }
+
+        function setupNtfy() {
+            const topic = prompt('Enter ntfy.sh topic for push notifications (leave empty to disable):', ntfyTopic);
+            if (topic !== null) {
+                ntfyTopic = topic;
+                localStorage.setItem('ntfyTopic', topic);
+                if (topic) {
+                    alert(`ntfy.sh notifications enabled!\n\nSubscribe on your phone:\nhttps://ntfy.sh/${topic}`);
+                }
+            }
         }
 
         function sendResize() {
@@ -585,6 +777,47 @@
             }
         }
 
+        async function loadSessions() {
+            try {
+                const res = await fetch('/api/sessions');
+                const data = await res.json();
+                const select = document.getElementById('sessionSelect');
+                const sessions = data.sessions || [];
+
+                select.innerHTML = '';
+                sessions.forEach(s => {
+                    const option = document.createElement('option');
+                    option.value = s.id;
+                    option.textContent = `${s.id} (${s.clients} clients)`;
+                    if (s.id === currentSession) {
+                        option.selected = true;
+                    }
+                    select.appendChild(option);
+                });
+            } catch (e) {
+                console.error('Failed to load sessions:', e);
+            }
+        }
+
+        function switchSession(sessionId) {
+            if (sessionId === currentSession) return;
+
+            currentSession = sessionId;
+            // Update URL without reload
+            const url = new URL(window.location);
+            url.searchParams.set('session', sessionId);
+            window.history.pushState({}, '', url);
+
+            // Reconnect to new session
+            if (ws) {
+                ws.close();
+            }
+            term.clear();
+            term.write(`\r\nSwitching to session: ${sessionId}...\r\n\r\n`);
+            showOverlay(`Connecting to session: ${sessionId}`);
+            setTimeout(connect, 500);
+        }
+
         function showOverlay(message) {
             const overlay = document.getElementById('connectionOverlay');
             overlay.classList.remove('hidden');
@@ -626,17 +859,14 @@
             const sequence = keyMap[key];
             if (sequence) {
                 ws.send(new TextEncoder().encode(sequence));
-                // Don't focus for scroll keys (prevents keyboard popup on mobile)
-                if (!['PageUp', 'PageDown', 'Home', 'End'].includes(key)) {
-                    term.focus();
-                }
+                // Don't focus terminal - prevents keyboard popup on mobile
             }
         }
 
         function sendCtrlC() {
             if (!ws || ws.readyState !== WebSocket.OPEN) return;
             ws.send(new TextEncoder().encode('\x03'));
-            term.focus();
+            // Don't focus terminal - prevents keyboard popup on mobile
         }
 
         // Scroll the terminal viewport (for scrollback buffer)
@@ -667,10 +897,60 @@
         }
 
         // Periodic status update
-        setInterval(updateClientCount, 5000);
+        setInterval(() => {
+            updateClientCount();
+            loadSessions();
+        }, 5000);
+
+        // Prevent keyboard from showing when clicking UI buttons
+        function setupNoKeyboardButtons() {
+            document.querySelectorAll('.no-keyboard').forEach(btn => {
+                btn.addEventListener('touchstart', (e) => {
+                    // Blur any focused element to hide keyboard
+                    if (document.activeElement) {
+                        document.activeElement.blur();
+                    }
+                }, { passive: true });
+
+                btn.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Prevent focus
+                });
+            });
+        }
+
+        // Hide mobile toolbar when keyboard is open
+        function setupKeyboardDetection() {
+            const toolbar = document.getElementById('mobileToolbar');
+            if (!toolbar) return;
+
+            // Store initial viewport height
+            const initialHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+
+            function checkKeyboard() {
+                const currentHeight = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+                const keyboardOpen = currentHeight < initialHeight * 0.75;
+
+                if (keyboardOpen) {
+                    toolbar.style.display = 'none';
+                } else {
+                    toolbar.style.display = '';
+                }
+            }
+
+            if (window.visualViewport) {
+                window.visualViewport.addEventListener('resize', checkKeyboard);
+            } else {
+                window.addEventListener('resize', checkKeyboard);
+            }
+        }
 
         // Initialize on load
-        document.addEventListener('DOMContentLoaded', initTerminal);
+        document.addEventListener('DOMContentLoaded', () => {
+            initTerminal();
+            updateNotificationButton();
+            setupNoKeyboardButtons();
+            setupKeyboardDetection();
+        });
     </script>
 </body>
 </html>

@@ -239,10 +239,10 @@ class SessionManager:
             cls._instance._default_session = None
         return cls._instance
 
-    def get_or_create_session(self, session_id: str, working_dir: str) -> PTYSession:
+    def get_or_create_session(self, session_id: str, working_dir: str, command: list[str] = None) -> PTYSession:
         """Get existing session or create a new one."""
         if session_id not in self._sessions:
-            session = PTYSession(working_dir)
+            session = PTYSession(working_dir, command=command)
             if session.start():
                 self._sessions[session_id] = session
                 if self._default_session is None:
@@ -268,7 +268,8 @@ class SessionManager:
                 "id": sid,
                 "running": s.is_running(),
                 "clients": s.get_client_count(),
-                "working_dir": s.working_dir
+                "working_dir": s.working_dir,
+                "command": s.command
             }
             for sid, s in self._sessions.items()
         ]

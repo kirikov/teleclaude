@@ -2,6 +2,7 @@
 TeleClaude - Shared Terminal Session for Claude Code
 A web server that provides shared access to a Claude Code PTY session.
 Like tmux, but accessible via terminal AND web browser.
+Supports multiple named sessions.
 """
 
 import asyncio
@@ -11,7 +12,7 @@ import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, FileResponse
 
@@ -19,6 +20,10 @@ from .pty_session import PTYSession, SessionClient, SessionManager
 
 # Working directory (can be configured)
 WORKING_DIR = os.environ.get("TELECLAUDE_WORKDIR", os.getcwd())
+# Session name (can be configured)
+SESSION_NAME = os.environ.get("TELECLAUDE_SESSION", "default")
+# Additional Claude arguments
+CLAUDE_ARGS = os.environ.get("TELECLAUDE_CLAUDE_ARGS", "")
 
 # Session manager singleton
 session_manager = SessionManager()
@@ -30,12 +35,20 @@ ws_connections: dict[str, WebSocket] = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events."""
-    # Startup: create default session
+    # Startup: create session with configured name
     try:
-        session_manager.get_or_create_session("default", WORKING_DIR)
-        print(f"Started Claude Code session in: {WORKING_DIR}")
+        # Build command with args
+        command = ["claude"]
+        if CLAUDE_ARGS:
+            import shlex
+            command.extend(shlex.split(CLAUDE_ARGS))
+
+        session_manager.get_or_create_session(SESSION_NAME, WORKING_DIR, command=command)
+        print(f"Started Claude Code session '{SESSION_NAME}' in: {WORKING_DIR}")
+        if CLAUDE_ARGS:
+            print(f"Claude args: {CLAUDE_ARGS}")
     except Exception as e:
-        print(f"Warning: Could not start default session: {e}")
+        print(f"Warning: Could not start session '{SESSION_NAME}': {e}")
 
     yield
 
@@ -59,31 +72,76 @@ async def get_status():
     session = session_manager.get_default_session()
     return {
         "working_dir": WORKING_DIR,
+        "current_session": SESSION_NAME,
         "session_running": session.is_running() if session else False,
         "connected_clients": session.get_client_count() if session else 0,
         "sessions": session_manager.list_sessions()
     }
 
 
-@app.post("/api/session/restart")
-async def restart_session():
-    """Restart the Claude Code session."""
-    session_manager.cleanup_session("default")
+@app.get("/api/sessions")
+async def list_sessions():
+    """List all available sessions."""
+    return {
+        "current": SESSION_NAME,
+        "sessions": session_manager.list_sessions()
+    }
+
+
+@app.post("/api/sessions/{session_id}")
+async def create_session(
+    session_id: str,
+    working_dir: str = Query(default=None),
+    claude_args: str = Query(default=None)
+):
+    """Create a new session."""
+    work_dir = working_dir or WORKING_DIR
+    command = ["claude"]
+    if claude_args:
+        import shlex
+        command.extend(shlex.split(claude_args))
     try:
-        session_manager.get_or_create_session("default", WORKING_DIR)
-        return {"status": "restarted"}
+        session_manager.get_or_create_session(session_id, work_dir, command=command)
+        return {"status": "created", "session_id": session_id, "working_dir": work_dir, "claude_args": claude_args}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/sessions/{session_id}")
+async def delete_session(session_id: str):
+    """Delete a session."""
+    if session_id not in session_manager._sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session_manager.cleanup_session(session_id)
+    return {"status": "deleted", "session_id": session_id}
+
+
+@app.post("/api/session/restart")
+async def restart_session(session_id: str = Query(default=None)):
+    """Restart a Claude Code session."""
+    sid = session_id or SESSION_NAME
+    session = session_manager.get_session(sid)
+    work_dir = session.working_dir if session else WORKING_DIR
+    session_manager.cleanup_session(sid)
+    try:
+        session_manager.get_or_create_session(sid, work_dir)
+        return {"status": "restarted", "session_id": sid}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.websocket("/ws/terminal")
-async def websocket_terminal(websocket: WebSocket):
+async def websocket_terminal(websocket: WebSocket, session_id: str = Query(default=None)):
     """WebSocket endpoint for terminal access."""
     await websocket.accept()
 
-    session = session_manager.get_default_session()
+    sid = session_id or SESSION_NAME
+    session = session_manager.get_session(sid)
+    if not session:
+        session = session_manager.get_default_session()
+
     if not session or not session.is_running():
-        await websocket.send_json({"type": "error", "message": "No active session"})
+        await websocket.send_json({"type": "error", "message": f"No active session: {sid}"})
         await websocket.close()
         return
 

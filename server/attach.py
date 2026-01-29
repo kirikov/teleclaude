@@ -169,13 +169,22 @@ def main():
         "--url",
         help="Full WebSocket URL (overrides host/port)"
     )
+    parser.add_argument(
+        "--session", "-s",
+        default="default",
+        help="Session name to attach to (default: 'default')"
+    )
 
     args = parser.parse_args()
 
     if args.url:
         url = args.url
+        # Add session_id if not already present
+        if "session_id=" not in url:
+            separator = "&" if "?" in url else "?"
+            url = f"{url}{separator}session_id={args.session}"
     else:
-        url = f"ws://{args.host}:{args.port}/ws/terminal"
+        url = f"ws://{args.host}:{args.port}/ws/terminal?session_id={args.session}"
 
     print(f"Connecting to {url}...")
     print("Press Ctrl+] to detach (session keeps running)\n")

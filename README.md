@@ -1,6 +1,6 @@
 # TeleClaude
 
-A shared terminal session for Claude Code - like tmux, but accessible via web browser.
+A shared terminal session for Claude Code - like tmux, but accessible via web browser and mobile.
 
 Multiple clients (terminal + webapp) can connect to the same Claude Code session and see/interact with it in real-time.
 
@@ -11,6 +11,100 @@ Multiple clients (terminal + webapp) can connect to the same Claude Code session
 - **Terminal Attach**: Connect from multiple terminals like tmux
 - **Real-time Sync**: All clients see the same session simultaneously
 - **Remote Access**: Use ngrok to access from anywhere
+- **Multiple Sessions**: Run multiple Claude sessions and switch between them
+- **Mobile Support**: Mobile-friendly UI with touch controls
+- **Push Notifications**: Get notified when Claude needs your attention
+
+## Quick Start
+
+```bash
+# Install globally (one time)
+ln -sf /path/to/teleclaude/teleclaude /usr/local/bin/teleclaude
+
+# Start TeleClaude in any directory
+teleclaude start
+
+# Start with Claude args (e.g., resume last conversation)
+teleclaude start -- --resume
+
+# Create additional sessions
+teleclaude new -s myproject ~/myproject
+teleclaude new -s api ~/api -- --resume
+
+# List sessions
+teleclaude sessions
+
+# Attach from another terminal
+teleclaude attach
+teleclaude attach -s myproject
+```
+
+## CLI Commands
+
+| Command | Description |
+|---------|-------------|
+| `teleclaude start [dir]` | Start server with Claude Code |
+| `teleclaude start -- --resume` | Start and resume last conversation |
+| `teleclaude new -s NAME [dir]` | Create new session on running server |
+| `teleclaude attach` | Attach to session from terminal |
+| `teleclaude attach -s NAME` | Attach to specific session |
+| `teleclaude sessions` | List all running sessions |
+| `teleclaude status` | Show server status |
+| `teleclaude url` | Show ngrok URL |
+| `teleclaude stop` | Stop the server |
+
+### Options
+
+| Option | Description |
+|--------|-------------|
+| `-s, --session NAME` | Session name (default: 'default') |
+| `-p, --port PORT` | Port number (default: 8765) |
+| `-- [args]` | Pass arguments to Claude Code |
+
+## Mobile Notifications
+
+TeleClaude can notify you when Claude needs your attention (asking questions, waiting for confirmation, etc.)
+
+### Option 1: Browser Notifications
+
+1. Open TeleClaude in your mobile browser
+2. Tap the **🔕** button in the header
+3. Allow notifications when prompted
+4. The button changes to **🔔** when enabled
+5. You'll get notifications when Claude needs input (even if the tab is in background)
+
+### Option 2: ntfy.sh Push Notifications (Recommended for Mobile)
+
+[ntfy.sh](https://ntfy.sh) sends real push notifications to your phone, even when the browser is closed.
+
+**Setup:**
+
+1. **Install ntfy app on your phone:**
+   - iOS: [App Store](https://apps.apple.com/app/ntfy/id1625396347)
+   - Android: [Play Store](https://play.google.com/store/apps/details?id=io.heckel.ntfy)
+
+2. **Subscribe to a topic:**
+   - Open the ntfy app
+   - Tap **+** to add a subscription
+   - Enter a unique topic name, e.g., `teleclaude-john-secret123`
+   - (Keep it private - anyone with the topic name can send you notifications)
+
+3. **Configure TeleClaude:**
+   - Open TeleClaude in your browser
+   - Tap the **📱** button in the header
+   - Enter the SAME topic name: `teleclaude-john-secret123`
+   - Click OK
+
+4. **Test it:**
+   ```bash
+   # Send a test notification
+   curl -d "Test from TeleClaude" https://ntfy.sh/teleclaude-john-secret123
+   ```
+
+**How it works:**
+- TeleClaude monitors Claude's output for patterns like `?`, `[Y/n]`, `proceed?`
+- When Claude appears to be waiting for input, a notification is sent
+- Notifications only fire when the browser tab is NOT focused
 
 ## Architecture
 
@@ -28,6 +122,9 @@ Multiple clients (terminal + webapp) can connect to the same Claude Code session
                 ↓               ↓               ↓
            Web Browser    Terminal #1    Terminal #2
            (xterm.js)     (attach)       (attach)
+                ↓
+           Push Notifications
+           (ntfy.sh / Browser)
 ```
 
 ## Installation
@@ -43,67 +140,53 @@ source venv/bin/activate
 # Install dependencies
 pip install -r requirements.txt
 
+# Make CLI globally available
+ln -sf $(pwd)/teleclaude /usr/local/bin/teleclaude
+
 # Optional: Install ngrok for remote access
 brew install ngrok  # macOS
-# or download from https://ngrok.com
 ```
 
-## Usage
+## Web Interface
 
-### Start the Server
+The web interface provides:
+
+- **Full terminal emulation** with xterm.js
+- **Session selector** to switch between sessions
+- **Mobile toolbar** with arrow keys, Esc, Tab, etc.
+- **Notification buttons**: 🔕 (browser) and 📱 (ntfy.sh)
+- **Attach info** with terminal attach instructions
+- **Restart Session** button
+
+### Mobile Controls
+
+On mobile devices, a toolbar appears at the bottom with:
+
+| Button | Function |
+|--------|----------|
+| ↑Scr / ↓Scr | Scroll terminal history |
+| Esc | Escape key |
+| Tab | Tab key |
+| ▲ ▼ ◀ ▶ | Arrow keys (for Claude prompts) |
+| ^C | Ctrl+C |
+| ⏎ | Enter |
+
+## Terminal Attach
+
+Connect to a running session from any terminal:
 
 ```bash
-cd /path/to/teleclaude
-source venv/bin/activate
+# Attach to default session
+teleclaude attach
 
-# Start with current directory as working dir
-./start.sh
+# Attach to specific session
+teleclaude attach -s myproject
 
-# Or start with a specific working directory
-TELECLAUDE_WORKDIR=/path/to/your/project ./start.sh
+# Attach to remote server
+teleclaude attach https://xxxx.ngrok-free.app
 ```
 
-The server will:
-1. Start Claude Code in a PTY session
-2. Launch the web server on port 8765
-3. Start ngrok tunnel (if installed)
-4. Display the access URLs
-
-### Access via Web Browser
-
-- **Local**: http://localhost:8765
-- **Remote**: The ngrok URL displayed at startup (e.g., https://xxxx.ngrok-free.app)
-
-### Attach from Terminal
-
-Connect another terminal to the same session:
-
-```bash
-cd /path/to/teleclaude
-source venv/bin/activate
-python -m server.attach
-
-# Or connect to a remote server
-python -m server.attach --host your-server.com --port 8765
-```
-
-Press `Ctrl+C` to detach without killing the session.
-
-### Manual Start (without script)
-
-```bash
-cd /path/to/teleclaude
-source venv/bin/activate
-
-# Set working directory for Claude Code
-export TELECLAUDE_WORKDIR=/path/to/your/project
-
-# Start server
-uvicorn server.main:app --host 0.0.0.0 --port 8765
-
-# In another terminal, start ngrok (optional)
-ngrok http 8765
-```
+**Detach:** Press `Ctrl+]` to detach without stopping the session.
 
 ## Configuration
 
@@ -111,7 +194,7 @@ ngrok http 8765
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `TELECLAUDE_WORKDIR` | Current directory | Working directory for Claude Code |
+| `TELECLAUDE_HOME` | Script location | TeleClaude installation directory |
 | `TELECLAUDE_PORT` | 8765 | Server port |
 
 ### ngrok Setup (for remote access)
@@ -122,15 +205,6 @@ ngrok http 8765
    ```bash
    ngrok config add-authtoken YOUR_TOKEN
    ```
-
-## Web Interface
-
-The web interface provides:
-
-- **Full terminal emulation** with xterm.js
-- **Status bar** showing connection status and client count
-- **Attach from Terminal** button with instructions
-- **Restart Session** button to restart Claude Code
 
 ## Files
 
@@ -143,45 +217,41 @@ teleclaude/
 │   ├── attach.py        # Terminal attach client
 │   └── static/
 │       └── index.html   # Web UI
-├── start.sh             # Start script
-├── stop.sh              # Stop script
-├── status.sh            # Status check
+├── teleclaude           # CLI script
 ├── requirements.txt
 └── README.md
 ```
 
 ## Troubleshooting
 
+### Notifications not working
+
+- **Browser notifications**: Make sure you allowed notifications when prompted
+- **ntfy.sh**: Verify the topic name matches exactly in both the app and TeleClaude
+- **Test ntfy directly**: `curl -d "test" https://ntfy.sh/your-topic`
+
+### Mobile UI issues
+
+- **Buttons hidden by Dynamic Island**: The UI should auto-adjust; try refreshing
+- **Keyboard covers input**: Use the mobile toolbar buttons instead
+
 ### Web UI shows "Connecting..." but doesn't connect
 
-- Check if the server is running: `curl http://localhost:8765/api/status`
-- Check server logs: `tail -f /tmp/teleclaude.log`
+- Check if the server is running: `teleclaude status`
+- Check server logs for errors
 - Try accessing localhost directly instead of ngrok
-
-### Can't type in the web terminal
-
-- Click on the terminal to focus it
-- Check browser console (F12) for errors
-- Verify WebSocket connection in Network tab → WS
 
 ### Terminal attach doesn't work
 
 - Ensure websockets package is installed: `pip install websockets`
-- Check the server URL is correct
-- Verify the server is running
-
-### Claude Code doesn't start
-
-- Ensure `claude` command is available in PATH
-- Check if Claude Code is installed: `claude --version`
-- Check server logs for errors
+- Use `Ctrl+]` to detach (not `Ctrl+C`)
 
 ## Security Notes
 
 - The server has no authentication - anyone with the URL can access your terminal
 - Use ngrok's authentication features for production use
+- Keep your ntfy.sh topic name private
 - Don't expose to public internet without proper security measures
-- Consider running in a sandboxed environment
 
 ## License
 
