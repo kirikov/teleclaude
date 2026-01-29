@@ -1,0 +1,13 @@
+venv/
+__pycache__/
+*.pyc
+.teleclaude.log
+.teleclaude.pid
+.teleclaude.url
+*.egg-info/
+.DS_Store
+.claude/
+*.png
+*.PNG
+.claude-plugin/
+skills/

@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#1a1a2e">
+    <title>TeleClaude - Shared Terminal</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --text-primary: #e4e4e7;
+            --text-secondary: #a1a1aa;
+            --accent: #8b5cf6;
+            --success: #22c55e;
+            --border: #27272a;
+        }
+
+        body {
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        header {
+            background: var(--bg-secondary);
+            padding: 0.75rem 1.5rem;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            flex-shrink: 0;
+        }
+
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .logo h1 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, var(--accent), #ec4899);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-bar {
+            display: flex;
+            align-items: center;
+            gap: 1.5rem;
+            font-size: 0.8rem;
+        }
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-secondary);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--success);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot.disconnected {
+            background: #ef4444;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .btn {
+            background: transparent;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            padding: 0.4rem 0.75rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            border-color: var(--accent);
+            color: var(--accent);
+        }
+
+        #terminal-container {
+            flex: 1;
+            padding: 0.5rem;
+            background: #000;
+            overflow: auto;
+            position: relative;
+        }
+
+        #terminal {
+            height: 100%;
+            width: 100%;
+            min-width: fit-content;
+        }
+
+        /* Allow xterm to handle its own scrolling */
+        .xterm-viewport {
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .connection-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 1rem;
+            z-index: 1000;
+        }
+
+        .connection-overlay.hidden {
+            display: none;
+        }
+
+        .connection-overlay h2 {
+            color: var(--text-primary);
+        }
+
+        .connection-overlay p {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+        }
+
+        .spinner-large {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .attach-info {
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            padding: 0.75rem 1rem;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            max-width: 300px;
+        }
+
+        .attach-info code {
+            background: var(--bg-primary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 3px;
+            display: block;
+            margin-top: 0.5rem;
+            color: var(--accent);
+        }
+
+        .attach-info .close-btn {
+            position: absolute;
+            top: 0.25rem;
+            right: 0.5rem;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            cursor: pointer;
+            font-size: 1rem;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        /* Mobile keyboard toolbar */
+        .mobile-toolbar {
+            display: none;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            padding: 0.4rem;
+            gap: 0.25rem;
+            flex-wrap: nowrap;
+            justify-content: space-around;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 100;
+        }
+
+        .mobile-toolbar button {
+            background: var(--bg-primary);
+            border: 1px solid var(--border);
+            color: var(--text-primary);
+            padding: 0.5rem;
+            border-radius: 4px;
+            font-size: 0.7rem;
+            font-family: inherit;
+            cursor: pointer;
+            min-width: 36px;
+            min-height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .mobile-toolbar button:active {
+            background: var(--accent);
+            border-color: var(--accent);
+        }
+
+        .mobile-toolbar .key-arrows {
+            display: flex;
+            gap: 0.15rem;
+        }
+
+        @media (max-width: 768px) {
+            .mobile-toolbar {
+                display: flex;
+                height: 50px;
+            }
+
+            #terminal-container {
+                height: calc(100vh - 50px - 50px); /* viewport - header - toolbar */
+                flex: none;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .mobile-toolbar button {
+                padding: 0.4rem;
+                font-size: 0.65rem;
+                min-width: 32px;
+                min-height: 32px;
+            }
+
+            .mobile-toolbar {
+                padding: 0.3rem;
+                gap: 0.2rem;
+                height: 44px;
+            }
+
+            #terminal-container {
+                height: calc(100vh - 40px - 44px); /* viewport - header - toolbar */
+            }
+        }
+
+        /* Mobile styles */
+        @media (max-width: 768px) {
+            header {
+                padding: 0.4rem 0.5rem;
+                gap: 0.25rem;
+            }
+
+            .logo h1 {
+                font-size: 0.9rem;
+            }
+
+            .logo svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            .status-bar {
+                gap: 0.4rem;
+                font-size: 0.7rem;
+            }
+
+            .status-item span {
+                font-size: 0.65rem;
+            }
+
+            .btn {
+                padding: 0.3rem 0.5rem;
+                font-size: 0.6rem;
+                white-space: nowrap;
+            }
+
+            #terminal-container {
+                padding: 2px;
+            }
+
+            .attach-info {
+                left: 0.5rem;
+                right: 0.5rem;
+                max-width: none;
+                bottom: 0.5rem;
+                font-size: 0.7rem;
+            }
+        }
+
+        @media (max-width: 480px) {
+            header {
+                padding: 0.3rem 0.4rem;
+            }
+
+            .logo h1 {
+                font-size: 0.8rem;
+            }
+
+            .status-bar {
+                gap: 0.3rem;
+            }
+
+            #clientCount {
+                display: none;
+            }
+
+            #statusText {
+                display: none;
+            }
+
+            .btn {
+                font-size: 0.55rem;
+                padding: 0.25rem 0.4rem;
+            }
+
+            #terminal-container {
+                padding: 0;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="logo">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="2" y="3" width="20" height="14" rx="2"/>
+                <path d="M8 21h8"/>
+                <path d="M12 17v4"/>
+                <path d="M7 8l3 3-3 3"/>
+                <line x1="13" y1="14" x2="16" y2="14"/>
+            </svg>
+            <h1>TeleClaude</h1>
+        </div>
+        <div class="status-bar">
+            <div class="status-item">
+                <div class="status-dot" id="statusDot"></div>
+                <span id="statusText">Connecting...</span>
+            </div>
+            <div class="status-item" id="clientCount">
+                <span>1 client</span>
+            </div>
+            <button class="btn" onclick="toggleAttachInfo()">Attach from Terminal</button>
+            <button class="btn" onclick="restartSession()">Restart Session</button>
+        </div>
+    </header>
+
+    <div id="terminal-container">
+        <div id="terminal"></div>
+    </div>
+
+    <div class="connection-overlay" id="connectionOverlay">
+        <div class="spinner-large"></div>
+        <h2>Connecting to Claude Code...</h2>
+        <p>Starting shared terminal session</p>
+    </div>
+
+    <div class="attach-info hidden" id="attachInfo">
+        <button class="close-btn" onclick="toggleAttachInfo()">&times;</button>
+        <strong>Attach from another terminal:</strong>
+        <code id="attachCommand">python -m server.attach</code>
+        <p style="margin-top: 0.5rem; color: var(--text-secondary);">
+            This connects your terminal to the same shared session.
+        </p>
+    </div>
+
+    <div class="mobile-toolbar" id="mobileToolbar">
+        <button onclick="scrollViewport(-10)" title="Scroll Up">&#8679;Scr</button>
+        <button onclick="scrollViewport(10)" title="Scroll Down">&#8681;Scr</button>
+        <button onclick="sendKey('Escape')" title="Escape">Esc</button>
+        <button onclick="sendKey('Tab')" title="Tab">Tab</button>
+        <div class="key-arrows">
+            <button onclick="sendKey('ArrowUp')" title="Up">&#9650;</button>
+            <button onclick="sendKey('ArrowDown')" title="Down">&#9660;</button>
+            <button onclick="sendKey('ArrowLeft')" title="Left">&#9664;</button>
+            <button onclick="sendKey('ArrowRight')" title="Right">&#9654;</button>
+        </div>
+        <button onclick="sendCtrlC()" title="Ctrl+C">^C</button>
+        <button onclick="sendKey('Enter')" title="Enter">&#9166;</button>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-web-links@0.9.0/lib/xterm-addon-web-links.min.js"></script>
+    <script>
+        let ws = null;
+        let term = null;
+        let fitAddon = null;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 5;
+
+        // Detect mobile and calculate appropriate font size
+        // Claude Code TUI needs ~80 columns minimum
+        function getTerminalFontSize() {
+            const width = window.innerWidth;
+            // Calculate font size to fit ~85 columns
+            // Approximate: each character is ~0.6 * fontSize wide
+            const targetCols = 85;
+            const charWidthRatio = 0.6;
+            const padding = 10; // container padding
+            const availableWidth = width - padding;
+            const idealFontSize = availableWidth / (targetCols * charWidthRatio);
+
+            // Clamp between 7 and 14
+            return Math.max(7, Math.min(14, Math.floor(idealFontSize)));
+        }
+
+        // Initialize terminal
+        function initTerminal() {
+            const fontSize = getTerminalFontSize();
+
+            term = new Terminal({
+                cursorBlink: true,
+                fontSize: fontSize,
+                fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace",
+                scrollback: 10000,
+                theme: {
+                    background: '#000000',
+                    foreground: '#e4e4e7',
+                    cursor: '#8b5cf6',
+                    cursorAccent: '#000000',
+                    selectionBackground: 'rgba(139, 92, 246, 0.3)',
+                    black: '#000000',
+                    red: '#ef4444',
+                    green: '#22c55e',
+                    yellow: '#f59e0b',
+                    blue: '#3b82f6',
+                    magenta: '#8b5cf6',
+                    cyan: '#06b6d4',
+                    white: '#e4e4e7',
+                    brightBlack: '#52525b',
+                    brightRed: '#f87171',
+                    brightGreen: '#4ade80',
+                    brightYellow: '#fbbf24',
+                    brightBlue: '#60a5fa',
+                    brightMagenta: '#a78bfa',
+                    brightCyan: '#22d3ee',
+                    brightWhite: '#ffffff'
+                },
+                allowProposedApi: true
+            });
+
+            fitAddon = new FitAddon.FitAddon();
+            term.loadAddon(fitAddon);
+            term.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+            term.open(document.getElementById('terminal'));
+            fitAddon.fit();
+
+            // Handle terminal input
+            term.onData(data => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(new TextEncoder().encode(data));
+                }
+            });
+
+            // Handle resize
+            window.addEventListener('resize', () => {
+                // Update font size on resize (for orientation change)
+                const newFontSize = getTerminalFontSize();
+                if (term.options.fontSize !== newFontSize) {
+                    term.options.fontSize = newFontSize;
+                }
+                fitAddon.fit();
+                sendResize();
+            });
+
+            // Connect to WebSocket
+            connect();
+        }
+
+        function connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/terminal`;
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                console.log('Connected');
+                updateStatus(true);
+                hideOverlay();
+                reconnectAttempts = 0;
+                sendResize();
+                term.focus();
+            };
+
+            ws.onclose = () => {
+                console.log('Disconnected');
+                updateStatus(false);
+                attemptReconnect();
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                updateStatus(false);
+            };
+
+            ws.onmessage = (event) => {
+                if (event.data instanceof ArrayBuffer) {
+                    const text = new TextDecoder().decode(event.data);
+                    term.write(text);
+                } else {
+                    term.write(event.data);
+                }
+            };
+        }
+
+        function sendResize() {
+            if (ws && ws.readyState === WebSocket.OPEN && term) {
+                const dims = fitAddon.proposeDimensions();
+                if (dims) {
+                    ws.send(JSON.stringify({
+                        type: 'resize',
+                        rows: dims.rows,
+                        cols: dims.cols
+                    }));
+                }
+            }
+        }
+
+        function attemptReconnect() {
+            if (reconnectAttempts < maxReconnectAttempts) {
+                reconnectAttempts++;
+                showOverlay(`Reconnecting... (${reconnectAttempts}/${maxReconnectAttempts})`);
+                setTimeout(connect, 2000);
+            } else {
+                showOverlay('Connection lost. Please refresh the page.');
+            }
+        }
+
+        function updateStatus(connected) {
+            const dot = document.getElementById('statusDot');
+            const text = document.getElementById('statusText');
+
+            if (connected) {
+                dot.classList.remove('disconnected');
+                text.textContent = 'Connected';
+                updateClientCount();
+            } else {
+                dot.classList.add('disconnected');
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        async function updateClientCount() {
+            try {
+                const res = await fetch('/api/status');
+                const data = await res.json();
+                const count = data.connected_clients || 1;
+                document.getElementById('clientCount').innerHTML =
+                    `<span>${count} client${count !== 1 ? 's' : ''}</span>`;
+            } catch (e) {
+                console.error('Failed to get status:', e);
+            }
+        }
+
+        function showOverlay(message) {
+            const overlay = document.getElementById('connectionOverlay');
+            overlay.classList.remove('hidden');
+            if (message) {
+                overlay.querySelector('h2').textContent = message;
+            }
+        }
+
+        function hideOverlay() {
+            document.getElementById('connectionOverlay').classList.add('hidden');
+        }
+
+        function toggleAttachInfo() {
+            const info = document.getElementById('attachInfo');
+            info.classList.toggle('hidden');
+        }
+
+        // Send special keys from mobile toolbar
+        function sendKey(key) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+            const keyMap = {
+                'ArrowUp': '\x1b[A',
+                'ArrowDown': '\x1b[B',
+                'ArrowRight': '\x1b[C',
+                'ArrowLeft': '\x1b[D',
+                'PageUp': '\x1b[5~',
+                'PageDown': '\x1b[6~',
+                'ShiftPageUp': '\x1b[5;2~',
+                'ShiftPageDown': '\x1b[6;2~',
+                'Home': '\x1b[H',
+                'End': '\x1b[F',
+                'Enter': '\r',
+                'Tab': '\t',
+                'Escape': '\x1b',
+                'Backspace': '\x7f'
+            };
+
+            const sequence = keyMap[key];
+            if (sequence) {
+                ws.send(new TextEncoder().encode(sequence));
+                // Don't focus for scroll keys (prevents keyboard popup on mobile)
+                if (!['PageUp', 'PageDown', 'Home', 'End'].includes(key)) {
+                    term.focus();
+                }
+            }
+        }
+
+        function sendCtrlC() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) return;
+            ws.send(new TextEncoder().encode('\x03'));
+            term.focus();
+        }
+
+        // Scroll the terminal viewport (for scrollback buffer)
+        function scrollViewport(lines) {
+            if (term) {
+                term.scrollLines(lines);
+            }
+        }
+
+
+        async function restartSession() {
+            if (!confirm('Restart the Claude Code session? Current session will be terminated.')) {
+                return;
+            }
+
+            try {
+                await fetch('/api/session/restart', { method: 'POST' });
+                term.clear();
+                term.write('\r\n Session restarted. Reconnecting...\r\n\r\n');
+                if (ws) {
+                    ws.close();
+                }
+                setTimeout(connect, 1000);
+            } catch (e) {
+                console.error('Failed to restart:', e);
+                alert('Failed to restart session');
+            }
+        }
+
+        // Periodic status update
+        setInterval(updateClientCount, 5000);
+
+        // Initialize on load
+        document.addEventListener('DOMContentLoaded', initTerminal);
+    </script>
+</body>
+</html>
