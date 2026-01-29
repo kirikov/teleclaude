@@ -24,6 +24,9 @@ ln -sf /path/to/teleclaude/teleclaude /usr/local/bin/teleclaude
 # Start TeleClaude - launches server and attaches to Claude Code
 teleclaude start
 
+# Start with password protection (recommended for remote access)
+teleclaude start -P mysecretpassword
+
 # Start with Claude args (e.g., resume last conversation)
 teleclaude start -- --resume
 
@@ -67,6 +70,7 @@ teleclaude stop
 |--------|-------------|
 | `-s, --session NAME` | Session name (default: 'default') |
 | `-p, --port PORT` | Port number (default: 8765) |
+| `-P, --password PWD` | Password protect the server |
 | `-- [args]` | Pass arguments to Claude Code |
 
 ## Mobile Notifications
@@ -204,6 +208,7 @@ teleclaude attach https://xxxx.ngrok-free.app
 |----------|---------|-------------|
 | `TELECLAUDE_HOME` | Script location | TeleClaude installation directory |
 | `TELECLAUDE_PORT` | 8765 | Server port |
+| `TELECLAUDE_PASSWORD` | (none) | Password for server authentication |
 
 ### ngrok Setup (for remote access)
 
@@ -256,10 +261,34 @@ teleclaude/
 
 ## Security Notes
 
-- The server has no authentication - anyone with the URL can access your terminal
-- Use ngrok's authentication features for production use
+### Password Protection
+
+TeleClaude supports password protection to secure your terminal session:
+
+```bash
+# Start with password protection
+teleclaude start -P mysecretpassword
+
+# Attach with password (will prompt if needed)
+teleclaude attach -P mysecretpassword
+
+# Or set via environment variable
+export TELECLAUDE_PASSWORD=mysecretpassword
+teleclaude attach
+```
+
+When password protection is enabled:
+- Web UI shows a login prompt before accessing the terminal
+- Terminal attach prompts for password if not provided
+- All API endpoints and WebSocket connections require authentication
+- Authentication tokens are stored in HTTP-only cookies (web) or passed via query parameter (attach)
+
+### Best Practices
+
+- **Always use password protection** when exposing via ngrok or any remote access
 - Keep your ntfy.sh topic name private
-- Don't expose to public internet without proper security measures
+- Use a strong, unique password
+- Consider using ngrok's additional authentication features for extra security
 
 ## License
 

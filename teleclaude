@@ -7,6 +7,7 @@ TELECLAUDE_HOME="${TELECLAUDE_HOME:-/Users/kyrylokyrykov/Developer/projects/expe
 PORT="${TELECLAUDE_PORT:-8765}"
 SESSION_NAME=""
 CLAUDE_ARGS=""
+PASSWORD=""
 
 show_help() {
     echo "TeleClaude - Shared Claude Code Terminal"
@@ -25,11 +26,13 @@ show_help() {
     echo "Options:"
     echo "  -s, --session NAME Session name (default: 'default')"
     echo "  -p, --port PORT    Port number (default: 8765)"
+    echo "  -P, --password PWD Password protect the server"
     echo "  -h, --help         Show this help"
     echo "  -- [args]          Pass remaining arguments to Claude Code"
     echo ""
     echo "Examples:"
     echo "  teleclaude start                           # Start and attach to Claude"
+    echo "  teleclaude start -P secret                 # Start with password protection"
     echo "  teleclaude start -- --resume               # Start with --resume flag"
     echo "  teleclaude start ~/code -- --resume        # Start in dir with --resume"
     echo "  teleclaude new -s api ~/api -- --model sonnet  # New session with model"
@@ -62,6 +65,9 @@ cmd_start() {
     if [ -n "$CLAUDE_ARGS" ]; then
         echo "Claude args: $CLAUDE_ARGS"
     fi
+    if [ -n "$PASSWORD" ]; then
+        echo "Password: enabled"
+    fi
     echo ""
 
     check_venv
@@ -77,6 +83,7 @@ cmd_start() {
     export TELECLAUDE_WORKDIR="$workdir"
     export TELECLAUDE_SESSION="$session"
     export TELECLAUDE_CLAUDE_ARGS="$CLAUDE_ARGS"
+    export TELECLAUDE_PASSWORD="$PASSWORD"
 
     # Start server with nohup to survive terminal close
     nohup uvicorn server.main:app --host 0.0.0.0 --port $PORT > "$TELECLAUDE_HOME/.teleclaude.log" 2>&1 &
@@ -330,6 +337,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         -p|--port)
             PORT="$2"
+            shift 2
+            ;;
+        -P|--password)
+            PASSWORD="$2"
             shift 2
             ;;
         -h|--help)

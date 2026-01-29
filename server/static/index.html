@@ -539,9 +539,222 @@
                 height: 8px;
             }
         }
+
+        /* Login form styles */
+        .login-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .login-overlay.hidden {
+            display: none;
+        }
+
+        .login-form {
+            background: var(--bg-secondary);
+            padding: 2rem;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            width: 100%;
+            max-width: 320px;
+            margin: 1rem;
+        }
+
+        .login-form h2 {
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+            font-size: 1.25rem;
+        }
+
+        .login-form p {
+            color: var(--text-secondary);
+            font-size: 0.85rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .login-form input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin-bottom: 1rem;
+        }
+
+        .login-form input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .login-form button {
+            width: 100%;
+            padding: 0.75rem;
+            background: var(--accent);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: opacity 0.2s;
+        }
+
+        .login-form button:hover {
+            opacity: 0.9;
+        }
+
+        .login-form button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .login-error {
+            color: #ef4444;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+            display: none;
+        }
+
+        .login-error.visible {
+            display: block;
+        }
+
+        /* Copy menu styles */
+        .copy-menu {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            display: none;
+            flex-direction: column;
+            gap: 0.25rem;
+            z-index: 1001;
+            min-width: 180px;
+        }
+
+        .copy-menu.visible {
+            display: flex;
+        }
+
+        .copy-menu button {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .copy-menu button:hover,
+        .copy-menu button:active {
+            background: rgba(139, 92, 246, 0.2);
+        }
+
+        .copy-menu-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            display: none;
+        }
+
+        .copy-menu-overlay.visible {
+            display: block;
+        }
+
+        /* Text view modal for mobile selection */
+        .text-view-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            z-index: 2000;
+            display: none;
+            flex-direction: column;
+        }
+
+        .text-view-modal.visible {
+            display: flex;
+        }
+
+        .text-view-header {
+            background: var(--bg-secondary);
+            padding: 0.75rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .text-view-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--text-primary);
+        }
+
+        .text-view-header button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .text-view-content {
+            flex: 1;
+            overflow: auto;
+            padding: 1rem;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .text-view-content pre {
+            margin: 0;
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-break: break-all;
+            -webkit-user-select: text;
+            user-select: text;
+        }
     </style>
 </head>
 <body>
+    <!-- Login overlay -->
+    <div class="login-overlay hidden" id="loginOverlay">
+        <form class="login-form" onsubmit="handleLogin(event)">
+            <h2>🔐 TeleClaude</h2>
+            <p>This session is password protected</p>
+            <div class="login-error" id="loginError">Invalid password</div>
+            <input type="password" id="loginPassword" placeholder="Enter password" autocomplete="current-password" required>
+            <button type="submit" id="loginButton">Login</button>
+        </form>
+    </div>
+
     <header>
         <div class="logo">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -598,8 +811,9 @@
     </div>
 
     <div class="mobile-toolbar" id="mobileToolbar">
-        <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;Scr</button>
-        <button class="no-keyboard" onclick="scrollViewport(10)" title="Scroll Down">&#8681;Scr</button>
+        <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;</button>
+        <button class="no-keyboard" onclick="scrollToBottom()" title="Scroll to Bottom">&#8615;</button>
+        <button class="no-keyboard" onclick="showCopyMenu()" title="Copy">📋</button>
         <button class="no-keyboard" onclick="sendKey('Escape')" title="Escape">Esc</button>
         <button class="no-keyboard" onclick="sendKey('Tab')" title="Tab">Tab</button>
         <div class="key-arrows">
@@ -610,6 +824,25 @@
         </div>
         <button class="no-keyboard" onclick="sendCtrlC()" title="Ctrl+C">^C</button>
         <button class="no-keyboard" onclick="sendKey('Enter')" title="Enter">&#9166;</button>
+    </div>
+
+    <!-- Copy menu -->
+    <div class="copy-menu-overlay" id="copyMenuOverlay" onclick="hideCopyMenu()"></div>
+    <div class="copy-menu" id="copyMenu">
+        <button onclick="copyLastOutput()">📄 Copy last output</button>
+        <button onclick="copyAllBuffer()">📑 Copy all</button>
+        <button onclick="openTextView()">📝 View as text (select)</button>
+    </div>
+
+    <!-- Text view modal for native selection -->
+    <div class="text-view-modal" id="textViewModal">
+        <div class="text-view-header">
+            <h3>Terminal Output</h3>
+            <button onclick="closeTextView()">Done</button>
+        </div>
+        <div class="text-view-content">
+            <pre id="textViewContent"></pre>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -623,6 +856,10 @@
         const maxReconnectAttempts = 5;
         let currentSession = new URLSearchParams(window.location.search).get('session') || 'default';
         let intentionalClose = false;  // Flag to prevent auto-reconnect on session switch
+
+        // Authentication
+        let authToken = null;
+        let authRequired = false;
 
         // Tile view state
         let tileViewActive = false;
@@ -729,7 +966,11 @@
             }
 
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
+            let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${currentSession}`;
+            // Add auth token if required
+            if (authToken) {
+                wsUrl += `&token=${encodeURIComponent(authToken)}`;
+            }
             console.log('Connecting to:', wsUrl);
 
             ws = new WebSocket(wsUrl);
@@ -746,9 +987,17 @@
                 loadNtfySettings();
             };
 
-            ws.onclose = () => {
-                console.log('Disconnected from session:', currentSession);
+            ws.onclose = (event) => {
+                console.log('Disconnected from session:', currentSession, 'code:', event.code);
                 updateStatus(false);
+
+                // Check for auth failure (code 4001)
+                if (event.code === 4001) {
+                    console.log('Authentication required');
+                    showLoginOverlay();
+                    return;
+                }
+
                 // Only auto-reconnect if this wasn't an intentional close (session switch)
                 if (!intentionalClose) {
                     attemptReconnect();
@@ -1127,6 +1376,149 @@
             }
         }
 
+        // Scroll to the very bottom of the terminal
+        function scrollToBottom() {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                tiles[focusedTileSession].term.scrollToBottom();
+            } else if (term) {
+                term.scrollToBottom();
+            }
+        }
+
+        // Show/hide copy menu
+        function showCopyMenu() {
+            document.getElementById('copyMenu').classList.add('visible');
+            document.getElementById('copyMenuOverlay').classList.add('visible');
+        }
+
+        function hideCopyMenu() {
+            document.getElementById('copyMenu').classList.remove('visible');
+            document.getElementById('copyMenuOverlay').classList.remove('visible');
+        }
+
+        // Get the active terminal
+        function getActiveTerm() {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                return tiles[focusedTileSession].term;
+            }
+            return term;
+        }
+
+        // Open text view modal for native selection
+        function openTextView() {
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
+
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to show');
+                return;
+            }
+
+            document.getElementById('textViewContent').textContent = allText;
+            document.getElementById('textViewModal').classList.add('visible');
+        }
+
+        // Close text view modal
+        function closeTextView() {
+            document.getElementById('textViewModal').classList.remove('visible');
+            document.getElementById('textViewContent').textContent = '';
+        }
+
+        // Copy last output (visible portion)
+        async function copyLastOutput() {
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
+
+            // Select all and get the last portion
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to copy');
+                return;
+            }
+
+            // Get last ~50 lines
+            const lines = allText.split('\n');
+            const lastLines = lines.slice(-50).join('\n').trim();
+
+            await copyToClipboard(lastLines);
+        }
+
+        // Copy entire buffer
+        async function copyAllBuffer() {
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
+
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to copy');
+                return;
+            }
+
+            await copyToClipboard(allText);
+        }
+
+        // Helper to copy text to clipboard
+        async function copyToClipboard(text) {
+            try {
+                await navigator.clipboard.writeText(text);
+                showToast('Copied!');
+            } catch (err) {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = text;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                showToast('Copied!');
+            }
+        }
+
+        // Show a brief toast notification
+        function showToast(message) {
+            let toast = document.getElementById('toast');
+            if (!toast) {
+                toast = document.createElement('div');
+                toast.id = 'toast';
+                toast.style.cssText = `
+                    position: fixed;
+                    bottom: 120px;
+                    left: 50%;
+                    transform: translateX(-50%);
+                    background: var(--bg-secondary);
+                    color: var(--text-primary);
+                    padding: 0.5rem 1rem;
+                    border-radius: 4px;
+                    border: 1px solid var(--border);
+                    font-size: 0.85rem;
+                    z-index: 1002;
+                    opacity: 0;
+                    transition: opacity 0.2s;
+                `;
+                document.body.appendChild(toast);
+            }
+            toast.textContent = message;
+            toast.style.opacity = '1';
+            setTimeout(() => {
+                toast.style.opacity = '0';
+            }, 1500);
+        }
+
 
         async function restartSession() {
             if (!confirm('Restart the Claude Code session? Current session will be terminated.')) {
@@ -1404,7 +1796,11 @@
         function connectTileWebSocket(sessionId, tileTerm) {
             return new Promise((resolve) => {
                 const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-                const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+                let wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+                // Add auth token if required
+                if (authToken) {
+                    wsUrl += `&token=${encodeURIComponent(authToken)}`;
+                }
 
                 const tileWs = new WebSocket(wsUrl);
                 tileWs.binaryType = 'arraybuffer';
@@ -1555,12 +1951,104 @@
 
         // ========== End Tile View Functions ==========
 
+        // ========== Authentication Functions ==========
+
+        async function checkAuth() {
+            try {
+                const res = await fetch('/api/auth/status');
+                const data = await res.json();
+
+                authRequired = data.auth_required;
+
+                if (authRequired && !data.authenticated) {
+                    showLoginOverlay();
+                    return false;
+                }
+
+                // Get token from cookie if authenticated
+                if (data.authenticated) {
+                    // Token is in httpOnly cookie, we just need to track that we're authenticated
+                    authToken = getCookie('teleclaude_token') || 'cookie-auth';
+                }
+
+                return true;
+            } catch (e) {
+                console.error('Failed to check auth:', e);
+                return true;  // Assume no auth on error
+            }
+        }
+
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }
+
+        function showLoginOverlay() {
+            document.getElementById('loginOverlay').classList.remove('hidden');
+            document.getElementById('loginPassword').focus();
+        }
+
+        function hideLoginOverlay() {
+            document.getElementById('loginOverlay').classList.add('hidden');
+            document.getElementById('loginError').classList.remove('visible');
+            document.getElementById('loginPassword').value = '';
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+
+            const password = document.getElementById('loginPassword').value;
+            const button = document.getElementById('loginButton');
+            const errorEl = document.getElementById('loginError');
+
+            button.disabled = true;
+            button.textContent = 'Logging in...';
+            errorEl.classList.remove('visible');
+
+            try {
+                const res = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password })
+                });
+
+                if (res.ok) {
+                    const data = await res.json();
+                    authToken = data.token;
+                    hideLoginOverlay();
+
+                    // Initialize terminal after successful login
+                    initTerminal();
+                } else {
+                    errorEl.textContent = 'Invalid password';
+                    errorEl.classList.add('visible');
+                    document.getElementById('loginPassword').select();
+                }
+            } catch (e) {
+                console.error('Login failed:', e);
+                errorEl.textContent = 'Login failed. Please try again.';
+                errorEl.classList.add('visible');
+            } finally {
+                button.disabled = false;
+                button.textContent = 'Login';
+            }
+        }
+
+        // ========== End Authentication Functions ==========
+
         // Initialize on load
-        document.addEventListener('DOMContentLoaded', () => {
-            initTerminal();
+        document.addEventListener('DOMContentLoaded', async () => {
             updateNotificationButton();
             setupNoKeyboardButtons();
             setupKeyboardDetection();
+
+            // Check auth before initializing terminal
+            const authenticated = await checkAuth();
+            if (authenticated) {
+                initTerminal();
+            }
         });
     </script>
 </body>

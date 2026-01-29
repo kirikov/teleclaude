@@ -6,15 +6,18 @@ Supports multiple named sessions.
 """
 
 import asyncio
+import hashlib
 import json
 import os
+import secrets
 import uuid
 from pathlib import Path
 from contextlib import asynccontextmanager
+from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request, Depends, Cookie
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 
 from .pty_session import PTYSession, SessionClient, SessionManager
 
@@ -24,6 +27,56 @@ WORKING_DIR = os.environ.get("TELECLAUDE_WORKDIR", os.getcwd())
 SESSION_NAME = os.environ.get("TELECLAUDE_SESSION", "default")
 # Additional Claude arguments
 CLAUDE_ARGS = os.environ.get("TELECLAUDE_CLAUDE_ARGS", "")
+# Password protection (optional)
+PASSWORD = os.environ.get("TELECLAUDE_PASSWORD", "")
+
+# Valid auth tokens (in-memory store)
+auth_tokens: set[str] = set()
+
+
+def is_auth_required() -> bool:
+    """Check if authentication is enabled."""
+    return bool(PASSWORD)
+
+
+def verify_password(password: str) -> bool:
+    """Verify the provided password."""
+    if not PASSWORD:
+        return True
+    return secrets.compare_digest(password, PASSWORD)
+
+
+def generate_token() -> str:
+    """Generate a new auth token."""
+    token = secrets.token_urlsafe(32)
+    auth_tokens.add(token)
+    return token
+
+
+def verify_token(token: Optional[str]) -> bool:
+    """Verify an auth token."""
+    if not PASSWORD:
+        return True
+    if not token:
+        return False
+    return token in auth_tokens
+
+
+async def check_auth(request: Request, token: Optional[str] = Cookie(default=None, alias="teleclaude_token")):
+    """Dependency to check authentication."""
+    if not is_auth_required():
+        return True
+
+    # Check cookie token
+    if token and verify_token(token):
+        return True
+
+    # Check query parameter token (for WebSocket)
+    query_token = request.query_params.get("token")
+    if query_token and verify_token(query_token):
+        return True
+
+    raise HTTPException(status_code=401, detail="Authentication required")
 
 # Session manager singleton
 session_manager = SessionManager()
@@ -66,8 +119,54 @@ async def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/api/auth/status")
+async def auth_status(token: Optional[str] = Cookie(default=None, alias="teleclaude_token")):
+    """Check if authentication is required and if user is authenticated."""
+    required = is_auth_required()
+    authenticated = verify_token(token) if required else True
+    return {
+        "auth_required": required,
+        "authenticated": authenticated
+    }
+
+
+@app.post("/api/auth/login")
+async def login(request: Request):
+    """Authenticate with password."""
+    try:
+        body = await request.json()
+        password = body.get("password", "")
+    except:
+        raise HTTPException(status_code=400, detail="Invalid request body")
+
+    if not verify_password(password):
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    token = generate_token()
+    response = JSONResponse({"status": "ok", "token": token})
+    response.set_cookie(
+        key="teleclaude_token",
+        value=token,
+        httponly=True,
+        samesite="strict",
+        max_age=86400 * 7  # 7 days
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+async def logout(token: Optional[str] = Cookie(default=None, alias="teleclaude_token")):
+    """Logout and invalidate token."""
+    if token and token in auth_tokens:
+        auth_tokens.discard(token)
+
+    response = JSONResponse({"status": "ok"})
+    response.delete_cookie(key="teleclaude_token")
+    return response
+
+
 @app.get("/api/status")
-async def get_status():
+async def get_status(auth: bool = Depends(check_auth)):
     """Get server and session status."""
     session = session_manager.get_default_session()
     return {
@@ -80,7 +179,7 @@ async def get_status():
 
 
 @app.get("/api/sessions")
-async def list_sessions():
+async def list_sessions(auth: bool = Depends(check_auth)):
     """List all available sessions."""
     return {
         "current": SESSION_NAME,
@@ -92,7 +191,8 @@ async def list_sessions():
 async def create_session(
     session_id: str,
     working_dir: str = Query(default=None),
-    claude_args: str = Query(default=None)
+    claude_args: str = Query(default=None),
+    auth: bool = Depends(check_auth)
 ):
     """Create a new session."""
     work_dir = working_dir or WORKING_DIR
@@ -108,7 +208,7 @@ async def create_session(
 
 
 @app.delete("/api/sessions/{session_id}")
-async def delete_session(session_id: str):
+async def delete_session(session_id: str, auth: bool = Depends(check_auth)):
     """Delete a session."""
     if session_id not in session_manager._sessions:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -117,7 +217,7 @@ async def delete_session(session_id: str):
 
 
 @app.post("/api/notifications/ntfy")
-async def set_ntfy_topic(topic: str = Query(default=""), session_id: str = Query(default=None)):
+async def set_ntfy_topic(topic: str = Query(default=""), session_id: str = Query(default=None), auth: bool = Depends(check_auth)):
     """Set ntfy.sh topic for push notifications."""
     sid = session_id or SESSION_NAME
     session = session_manager.get_session(sid)
@@ -137,7 +237,7 @@ async def set_ntfy_topic(topic: str = Query(default=""), session_id: str = Query
 
 
 @app.get("/api/notifications/ntfy")
-async def get_ntfy_topic(session_id: str = Query(default=None)):
+async def get_ntfy_topic(session_id: str = Query(default=None), auth: bool = Depends(check_auth)):
     """Get current ntfy.sh topic."""
     sid = session_id or SESSION_NAME
     session = session_manager.get_session(sid)
@@ -153,7 +253,7 @@ async def get_ntfy_topic(session_id: str = Query(default=None)):
 
 
 @app.post("/api/session/restart")
-async def restart_session(session_id: str = Query(default=None)):
+async def restart_session(session_id: str = Query(default=None), auth: bool = Depends(check_auth)):
     """Restart a Claude Code session."""
     sid = session_id or SESSION_NAME
     session = session_manager.get_session(sid)
@@ -167,8 +267,13 @@ async def restart_session(session_id: str = Query(default=None)):
 
 
 @app.websocket("/ws/terminal")
-async def websocket_terminal(websocket: WebSocket, session_id: str = Query(default=None)):
+async def websocket_terminal(websocket: WebSocket, session_id: str = Query(default=None), token: str = Query(default=None)):
     """WebSocket endpoint for terminal access."""
+    # Check authentication before accepting
+    if is_auth_required() and not verify_token(token):
+        await websocket.close(code=4001, reason="Authentication required")
+        return
+
     await websocket.accept()
 
     # Determine which session to connect to
