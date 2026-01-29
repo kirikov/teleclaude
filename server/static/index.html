@@ -37,10 +37,10 @@
             overflow: hidden;
         }
 
-        /* iPhone with Dynamic Island/notch - add top spacing */
-        @media screen and (max-width: 480px) {
+        /* iPhone with Dynamic Island/notch - use safe area */
+        @supports (padding-top: env(safe-area-inset-top)) {
             body {
-                padding-top: 50px;
+                padding-top: env(safe-area-inset-top);
             }
         }
 
@@ -143,6 +143,97 @@
             height: 100%;
             width: 100%;
             min-width: fit-content;
+        }
+
+        /* Tile view styles */
+        .tile-container {
+            display: none;
+            flex: 1;
+            padding: 0.25rem;
+            background: #000;
+            gap: 0.25rem;
+        }
+
+        .tile-container.active {
+            display: grid;
+        }
+
+        .tile-container.tiles-2 {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr;
+        }
+
+        .tile-container.tiles-3 {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+        }
+
+        .tile-container.tiles-3 .tile:nth-child(3) {
+            grid-column: span 2;
+        }
+
+        .tile-container.tiles-4 {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+        }
+
+        .tile {
+            background: #0a0a0a;
+            border: 2px solid var(--border);
+            border-radius: 4px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .tile.focused {
+            border-color: var(--accent);
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
+        }
+
+        .tile-header {
+            background: var(--bg-secondary);
+            padding: 0.25rem 0.5rem;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .tile-header .session-name {
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .tile-header .tile-status {
+            display: flex;
+            align-items: center;
+            gap: 0.25rem;
+        }
+
+        .tile-header .status-dot {
+            width: 6px;
+            height: 6px;
+        }
+
+        .tile-terminal {
+            flex: 1;
+            min-height: 0;
+            overflow: hidden;
+        }
+
+        .btn.active {
+            background: var(--accent);
+            color: white;
+            border-color: var(--accent);
+        }
+
+        #terminal-container.hidden {
+            display: none;
         }
 
         /* Allow xterm to handle its own scrolling */
@@ -383,6 +474,70 @@
             #terminal-container {
                 padding: 0;
             }
+
+            /* Mobile session picker (instead of tile view) */
+            .tile-container {
+                display: none;
+                flex-direction: column;
+                padding: 1rem;
+                gap: 0.5rem;
+                overflow-y: auto;
+            }
+
+            .tile-container.active {
+                display: flex;
+            }
+
+            .session-picker-item {
+                background: var(--bg-secondary);
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 1rem;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                cursor: pointer;
+                transition: all 0.2s;
+            }
+
+            .session-picker-item:hover,
+            .session-picker-item:active {
+                border-color: var(--accent);
+                background: rgba(139, 92, 246, 0.1);
+            }
+
+            .session-picker-item.current {
+                border-color: var(--accent);
+                background: rgba(139, 92, 246, 0.15);
+            }
+
+            .session-picker-item .session-info {
+                display: flex;
+                flex-direction: column;
+                gap: 0.25rem;
+            }
+
+            .session-picker-item .session-name {
+                font-weight: 600;
+                color: var(--text-primary);
+                font-size: 1rem;
+            }
+
+            .session-picker-item .session-details {
+                font-size: 0.75rem;
+                color: var(--text-secondary);
+            }
+
+            .session-picker-item .session-status {
+                display: flex;
+                align-items: center;
+                gap: 0.5rem;
+            }
+
+            .session-picker-item .status-dot {
+                width: 8px;
+                height: 8px;
+            }
         }
     </style>
 </head>
@@ -411,6 +566,7 @@
             <div class="status-item" id="clientCount">
                 <span>1 client</span>
             </div>
+            <button class="btn no-keyboard" id="tileBtn" onclick="toggleTileView()" title="Tile View">⊞</button>
             <button class="btn no-keyboard" id="notifyBtn" onclick="toggleNotifications()" title="Browser Notifications">🔕</button>
             <button class="btn no-keyboard" onclick="setupNtfy()" title="Setup ntfy.sh push notifications">📱</button>
             <button class="btn btn-text no-keyboard" onclick="toggleAttachInfo()">Attach</button>
@@ -420,6 +576,10 @@
 
     <div id="terminal-container">
         <div id="terminal"></div>
+    </div>
+
+    <div class="tile-container" id="tileContainer">
+        <!-- Tiles will be dynamically added here -->
     </div>
 
     <div class="connection-overlay" id="connectionOverlay">
@@ -463,6 +623,11 @@
         const maxReconnectAttempts = 5;
         let currentSession = new URLSearchParams(window.location.search).get('session') || 'default';
         let intentionalClose = false;  // Flag to prevent auto-reconnect on session switch
+
+        // Tile view state
+        let tileViewActive = false;
+        let tiles = {};  // sessionId -> { term, ws, fitAddon, element }
+        let focusedTileSession = null;
 
         // Notification settings
         let notificationsEnabled = localStorage.getItem('notifications') === 'true';
@@ -1029,6 +1194,366 @@
                 window.addEventListener('resize', checkKeyboard);
             }
         }
+
+        // ========== Tile View Functions ==========
+
+        async function toggleTileView() {
+            tileViewActive = !tileViewActive;
+            const btn = document.getElementById('tileBtn');
+            const termContainer = document.getElementById('terminal-container');
+            const tileContainer = document.getElementById('tileContainer');
+
+            if (tileViewActive) {
+                btn.classList.add('active');
+                termContainer.classList.add('hidden');
+
+                // Fetch all sessions and create tiles
+                await createTiles();
+
+                tileContainer.classList.add('active');
+            } else {
+                btn.classList.remove('active');
+                tileContainer.classList.remove('active');
+                termContainer.classList.remove('hidden');
+
+                // Destroy all tiles
+                destroyAllTiles();
+
+                // Reconnect main terminal to current session
+                if (term) {
+                    fitAddon.fit();
+                }
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    connect();
+                }
+            }
+        }
+
+        function isMobile() {
+            return window.innerWidth <= 480;
+        }
+
+        async function createTiles() {
+            const tileContainer = document.getElementById('tileContainer');
+            tileContainer.innerHTML = '';
+
+            try {
+                const res = await fetch('/api/sessions');
+                const data = await res.json();
+                const sessions = data.sessions || [];
+
+                // Filter only running sessions
+                const runningSessions = sessions.filter(s => s.running);
+
+                if (runningSessions.length === 0) {
+                    tileContainer.innerHTML = '<div style="color: var(--text-secondary); padding: 2rem; text-align: center;">No running sessions</div>';
+                    return;
+                }
+
+                // On mobile, show session picker instead of terminal tiles
+                if (isMobile()) {
+                    tileContainer.className = 'tile-container active';
+                    createSessionPicker(runningSessions, tileContainer);
+                    return;
+                }
+
+                // Desktop: Set grid class based on number of sessions
+                tileContainer.className = 'tile-container active';
+                if (runningSessions.length === 2) {
+                    tileContainer.classList.add('tiles-2');
+                } else if (runningSessions.length === 3) {
+                    tileContainer.classList.add('tiles-3');
+                } else if (runningSessions.length >= 4) {
+                    tileContainer.classList.add('tiles-4');
+                } else {
+                    tileContainer.classList.add('tiles-2');  // Single session still uses 2-col layout
+                }
+
+                // Create tile for each session (max 4)
+                const tileSessions = runningSessions.slice(0, 4);
+                for (const session of tileSessions) {
+                    await createTile(session.id, tileContainer);
+                }
+
+                // Focus the first tile
+                if (tileSessions.length > 0) {
+                    focusTile(tileSessions[0].id);
+                }
+
+            } catch (e) {
+                console.error('Failed to load sessions for tiles:', e);
+                tileContainer.innerHTML = '<div style="color: #ef4444; padding: 2rem;">Failed to load sessions</div>';
+            }
+        }
+
+        function createSessionPicker(sessions, container) {
+            sessions.forEach(session => {
+                const item = document.createElement('div');
+                item.className = 'session-picker-item';
+                if (session.id === currentSession) {
+                    item.classList.add('current');
+                }
+
+                item.innerHTML = `
+                    <div class="session-info">
+                        <span class="session-name">${session.id}</span>
+                        <span class="session-details">${session.clients} client${session.clients !== 1 ? 's' : ''} · ${session.working_dir || 'unknown'}</span>
+                    </div>
+                    <div class="session-status">
+                        <div class="status-dot ${session.running ? '' : 'disconnected'}"></div>
+                        <span>${session.running ? 'Running' : 'Stopped'}</span>
+                    </div>
+                `;
+
+                item.onclick = () => {
+                    // Update current session and close picker
+                    const needsSwitch = session.id !== currentSession;
+                    if (needsSwitch) {
+                        // Update URL without reload
+                        const url = new URL(window.location);
+                        url.searchParams.set('session', session.id);
+                        window.history.pushState({}, '', url);
+
+                        // Close existing connection
+                        intentionalClose = true;
+                        if (ws) {
+                            ws.close();
+                            ws = null;
+                        }
+                        currentSession = session.id;
+                        reconnectAttempts = 0;
+                    }
+
+                    // Close the picker (toggleTileView will reconnect)
+                    toggleTileView();
+                };
+
+                container.appendChild(item);
+            });
+        }
+
+        async function createTile(sessionId, container) {
+            const tile = document.createElement('div');
+            tile.className = 'tile';
+            tile.id = `tile-${sessionId}`;
+            tile.onclick = () => focusTile(sessionId);
+
+            tile.innerHTML = `
+                <div class="tile-header">
+                    <span class="session-name">${sessionId}</span>
+                    <div class="tile-status">
+                        <div class="status-dot" id="tileDot-${sessionId}"></div>
+                        <span id="tileStatus-${sessionId}">Connecting...</span>
+                    </div>
+                </div>
+                <div class="tile-terminal" id="tileTerm-${sessionId}"></div>
+            `;
+
+            container.appendChild(tile);
+
+            // Create terminal instance for this tile
+            const tileTerm = new Terminal({
+                cursorBlink: true,
+                fontSize: 11,
+                fontFamily: "'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace",
+                theme: {
+                    background: '#0a0a0a',
+                    foreground: '#e4e4e7',
+                    cursor: '#8b5cf6',
+                    selectionBackground: 'rgba(139, 92, 246, 0.3)'
+                },
+                scrollback: 5000
+            });
+
+            const tileFitAddon = new FitAddon.FitAddon();
+            tileTerm.loadAddon(tileFitAddon);
+            tileTerm.loadAddon(new WebLinksAddon.WebLinksAddon());
+
+            const termElement = document.getElementById(`tileTerm-${sessionId}`);
+            tileTerm.open(termElement);
+
+            // Delay fit to ensure element has dimensions
+            setTimeout(() => tileFitAddon.fit(), 100);
+
+            // Connect WebSocket for this tile
+            const tileWs = await connectTileWebSocket(sessionId, tileTerm);
+
+            // Store tile references
+            tiles[sessionId] = {
+                term: tileTerm,
+                ws: tileWs,
+                fitAddon: tileFitAddon,
+                element: tile
+            };
+
+            // Handle terminal input
+            tileTerm.onData(data => {
+                if (tiles[sessionId] && tiles[sessionId].ws && tiles[sessionId].ws.readyState === WebSocket.OPEN) {
+                    tiles[sessionId].ws.send(new TextEncoder().encode(data));
+                }
+            });
+
+            // Handle window resize
+            window.addEventListener('resize', () => {
+                if (tiles[sessionId]) {
+                    setTimeout(() => tiles[sessionId].fitAddon.fit(), 100);
+                }
+            });
+        }
+
+        function connectTileWebSocket(sessionId, tileTerm) {
+            return new Promise((resolve) => {
+                const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+                const wsUrl = `${protocol}//${window.location.host}/ws/terminal?session_id=${sessionId}`;
+
+                const tileWs = new WebSocket(wsUrl);
+                tileWs.binaryType = 'arraybuffer';
+
+                tileWs.onopen = () => {
+                    console.log('Tile connected to session:', sessionId);
+                    updateTileStatus(sessionId, true);
+
+                    // Send resize
+                    const dims = tiles[sessionId]?.fitAddon?.proposeDimensions();
+                    if (dims) {
+                        tileWs.send(JSON.stringify({
+                            type: 'resize',
+                            rows: dims.rows,
+                            cols: dims.cols
+                        }));
+                    }
+                    resolve(tileWs);
+                };
+
+                tileWs.onclose = () => {
+                    console.log('Tile disconnected from session:', sessionId);
+                    updateTileStatus(sessionId, false);
+                };
+
+                tileWs.onerror = (error) => {
+                    console.error('Tile WebSocket error:', sessionId, error);
+                    updateTileStatus(sessionId, false);
+                };
+
+                tileWs.onmessage = (event) => {
+                    let text;
+                    if (event.data instanceof ArrayBuffer) {
+                        text = new TextDecoder().decode(event.data);
+                    } else {
+                        text = event.data;
+                    }
+                    tileTerm.write(text);
+                };
+
+                // Resolve even if connection fails
+                setTimeout(() => resolve(tileWs), 5000);
+            });
+        }
+
+        function updateTileStatus(sessionId, connected) {
+            const dot = document.getElementById(`tileDot-${sessionId}`);
+            const text = document.getElementById(`tileStatus-${sessionId}`);
+
+            if (dot && text) {
+                if (connected) {
+                    dot.classList.remove('disconnected');
+                    text.textContent = 'Connected';
+                } else {
+                    dot.classList.add('disconnected');
+                    text.textContent = 'Disconnected';
+                }
+            }
+        }
+
+        function focusTile(sessionId) {
+            // Remove focus from all tiles
+            Object.keys(tiles).forEach(sid => {
+                if (tiles[sid] && tiles[sid].element) {
+                    tiles[sid].element.classList.remove('focused');
+                }
+            });
+
+            // Focus the selected tile
+            if (tiles[sessionId] && tiles[sessionId].element) {
+                tiles[sessionId].element.classList.add('focused');
+                tiles[sessionId].term.focus();
+                focusedTileSession = sessionId;
+            }
+        }
+
+        function destroyAllTiles() {
+            Object.keys(tiles).forEach(sessionId => {
+                if (tiles[sessionId]) {
+                    if (tiles[sessionId].ws) {
+                        tiles[sessionId].ws.close();
+                    }
+                    if (tiles[sessionId].term) {
+                        tiles[sessionId].term.dispose();
+                    }
+                }
+            });
+            tiles = {};
+            focusedTileSession = null;
+
+            const tileContainer = document.getElementById('tileContainer');
+            tileContainer.innerHTML = '';
+            tileContainer.className = 'tile-container';
+        }
+
+        // Override sendKey for tile view
+        const originalSendKey = sendKey;
+        sendKey = function(key) {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                const tileWs = tiles[focusedTileSession].ws;
+                if (tileWs && tileWs.readyState === WebSocket.OPEN) {
+                    const keyMap = {
+                        'ArrowUp': '\x1b[A',
+                        'ArrowDown': '\x1b[B',
+                        'ArrowRight': '\x1b[C',
+                        'ArrowLeft': '\x1b[D',
+                        'PageUp': '\x1b[5~',
+                        'PageDown': '\x1b[6~',
+                        'Home': '\x1b[H',
+                        'End': '\x1b[F',
+                        'Enter': '\r',
+                        'Tab': '\t',
+                        'Escape': '\x1b',
+                        'Backspace': '\x7f'
+                    };
+                    const sequence = keyMap[key];
+                    if (sequence) {
+                        tileWs.send(new TextEncoder().encode(sequence));
+                    }
+                }
+            } else {
+                originalSendKey(key);
+            }
+        };
+
+        // Override sendCtrlC for tile view
+        const originalSendCtrlC = sendCtrlC;
+        sendCtrlC = function() {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                const tileWs = tiles[focusedTileSession].ws;
+                if (tileWs && tileWs.readyState === WebSocket.OPEN) {
+                    tileWs.send(new TextEncoder().encode('\x03'));
+                }
+            } else {
+                originalSendCtrlC();
+            }
+        };
+
+        // Override scrollViewport for tile view
+        const originalScrollViewport = scrollViewport;
+        scrollViewport = function(lines) {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                tiles[focusedTileSession].term.scrollLines(lines);
+            } else {
+                originalScrollViewport(lines);
+            }
+        };
+
+        // ========== End Tile View Functions ==========
 
         // Initialize on load
         document.addEventListener('DOMContentLoaded', () => {
