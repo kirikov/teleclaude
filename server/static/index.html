@@ -627,6 +627,58 @@
         .login-error.visible {
             display: block;
         }
+
+        /* Copy menu styles */
+        .copy-menu {
+            position: fixed;
+            bottom: 60px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 0.5rem;
+            display: none;
+            flex-direction: column;
+            gap: 0.25rem;
+            z-index: 1001;
+            min-width: 180px;
+        }
+
+        .copy-menu.visible {
+            display: flex;
+        }
+
+        .copy-menu button {
+            background: transparent;
+            border: none;
+            color: var(--text-primary);
+            padding: 0.75rem 1rem;
+            text-align: left;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .copy-menu button:hover,
+        .copy-menu button:active {
+            background: rgba(139, 92, 246, 0.2);
+        }
+
+        .copy-menu-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.3);
+            z-index: 1000;
+            display: none;
+        }
+
+        .copy-menu-overlay.visible {
+            display: block;
+        }
     </style>
 </head>
 <body>
@@ -699,7 +751,7 @@
     <div class="mobile-toolbar" id="mobileToolbar">
         <button class="no-keyboard" onclick="scrollViewport(-10)" title="Scroll Up">&#8679;</button>
         <button class="no-keyboard" onclick="scrollToBottom()" title="Scroll to Bottom">&#8615;</button>
-        <button class="no-keyboard" onclick="copySelection()" title="Copy Selected Text">📋</button>
+        <button class="no-keyboard" onclick="showCopyMenu()" title="Copy">📋</button>
         <button class="no-keyboard" onclick="sendKey('Escape')" title="Escape">Esc</button>
         <button class="no-keyboard" onclick="sendKey('Tab')" title="Tab">Tab</button>
         <div class="key-arrows">
@@ -710,6 +762,14 @@
         </div>
         <button class="no-keyboard" onclick="sendCtrlC()" title="Ctrl+C">^C</button>
         <button class="no-keyboard" onclick="sendKey('Enter')" title="Enter">&#9166;</button>
+    </div>
+
+    <!-- Copy menu -->
+    <div class="copy-menu-overlay" id="copyMenuOverlay" onclick="hideCopyMenu()"></div>
+    <div class="copy-menu" id="copyMenu">
+        <button onclick="copyLastOutput()">📄 Copy last output</button>
+        <button onclick="copyAllBuffer()">📑 Copy all</button>
+        <button onclick="copySelection()">✂️ Copy selection</button>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -1252,29 +1312,90 @@
             }
         }
 
+        // Show/hide copy menu
+        function showCopyMenu() {
+            document.getElementById('copyMenu').classList.add('visible');
+            document.getElementById('copyMenuOverlay').classList.add('visible');
+        }
+
+        function hideCopyMenu() {
+            document.getElementById('copyMenu').classList.remove('visible');
+            document.getElementById('copyMenuOverlay').classList.remove('visible');
+        }
+
+        // Get the active terminal
+        function getActiveTerm() {
+            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
+                return tiles[focusedTileSession].term;
+            }
+            return term;
+        }
+
         // Copy selected text to clipboard
         async function copySelection() {
-            let selectedText = '';
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
 
-            if (tileViewActive && focusedTileSession && tiles[focusedTileSession]) {
-                selectedText = tiles[focusedTileSession].term.getSelection();
-            } else if (term) {
-                selectedText = term.getSelection();
-            }
-
+            const selectedText = activeTerm.getSelection();
             if (!selectedText) {
-                // No selection - show brief feedback
-                showToast('Select text first');
+                showToast('No text selected');
                 return;
             }
 
+            await copyToClipboard(selectedText);
+        }
+
+        // Copy last output (visible portion)
+        async function copyLastOutput() {
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
+
+            // Select all and get the last portion
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to copy');
+                return;
+            }
+
+            // Get last ~50 lines
+            const lines = allText.split('\n');
+            const lastLines = lines.slice(-50).join('\n').trim();
+
+            await copyToClipboard(lastLines);
+        }
+
+        // Copy entire buffer
+        async function copyAllBuffer() {
+            hideCopyMenu();
+            const activeTerm = getActiveTerm();
+            if (!activeTerm) return;
+
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to copy');
+                return;
+            }
+
+            await copyToClipboard(allText);
+        }
+
+        // Helper to copy text to clipboard
+        async function copyToClipboard(text) {
             try {
-                await navigator.clipboard.writeText(selectedText);
+                await navigator.clipboard.writeText(text);
                 showToast('Copied!');
             } catch (err) {
                 // Fallback for older browsers
                 const textarea = document.createElement('textarea');
-                textarea.value = selectedText;
+                textarea.value = text;
                 textarea.style.position = 'fixed';
                 textarea.style.opacity = '0';
                 document.body.appendChild(textarea);
@@ -1293,7 +1414,7 @@
                 toast.id = 'toast';
                 toast.style.cssText = `
                     position: fixed;
-                    bottom: 80px;
+                    bottom: 120px;
                     left: 50%;
                     transform: translateX(-50%);
                     background: var(--bg-secondary);
@@ -1302,7 +1423,7 @@
                     border-radius: 4px;
                     border: 1px solid var(--border);
                     font-size: 0.85rem;
-                    z-index: 1000;
+                    z-index: 1002;
                     opacity: 0;
                     transition: opacity 0.2s;
                 `;
