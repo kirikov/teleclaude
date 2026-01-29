@@ -14,7 +14,7 @@ show_help() {
     echo "Usage: teleclaude [command] [options] [-- claude_args...]"
     echo ""
     echo "Commands:"
-    echo "  start [dir]        Start server with Claude Code in [dir] (default: current dir)"
+    echo "  start [dir]        Start server and attach to Claude Code (default: current dir)"
     echo "  new [dir]          Create new session on running server (use -s for name)"
     echo "  attach [url]       Attach to running session from terminal"
     echo "  sessions           List all running sessions"
@@ -29,12 +29,14 @@ show_help() {
     echo "  -- [args]          Pass remaining arguments to Claude Code"
     echo ""
     echo "Examples:"
-    echo "  teleclaude start                           # Start with default session"
-    echo "  teleclaude start -- --resume               # Start and resume last conversation"
+    echo "  teleclaude start                           # Start and attach to Claude"
+    echo "  teleclaude start -- --resume               # Start with --resume flag"
     echo "  teleclaude start ~/code -- --resume        # Start in dir with --resume"
     echo "  teleclaude new -s api ~/api -- --model sonnet  # New session with model"
     echo "  teleclaude sessions                        # List all sessions"
     echo "  teleclaude attach -s myproject             # Attach to named session"
+    echo ""
+    echo "Press Ctrl+] to detach from session (server keeps running)"
 }
 
 check_venv() {
@@ -70,19 +72,27 @@ cmd_start() {
     pkill -f "ngrok http $PORT" 2>/dev/null || true
     sleep 1
 
-    # Start server
+    # Start server in background with logs redirected
     cd "$TELECLAUDE_HOME"
     export TELECLAUDE_WORKDIR="$workdir"
     export TELECLAUDE_SESSION="$session"
     export TELECLAUDE_CLAUDE_ARGS="$CLAUDE_ARGS"
-    uvicorn server.main:app --host 0.0.0.0 --port $PORT &
+    uvicorn server.main:app --host 0.0.0.0 --port $PORT > "$TELECLAUDE_HOME/.teleclaude.log" 2>&1 &
     SERVER_PID=$!
     echo $SERVER_PID > "$TELECLAUDE_HOME/.teleclaude.pid"
 
-    sleep 2
+    # Wait for server to be ready
+    echo "Starting server..."
+    for i in {1..10}; do
+        if curl -s "http://localhost:$PORT/api/status" > /dev/null 2>&1; then
+            break
+        fi
+        sleep 0.5
+    done
 
     if ! kill -0 $SERVER_PID 2>/dev/null; then
         echo "Error: Server failed to start"
+        echo "Check logs: cat $TELECLAUDE_HOME/.teleclaude.log"
         exit 1
     fi
 
@@ -92,7 +102,8 @@ cmd_start() {
     if command -v ngrok &> /dev/null; then
         ngrok http $PORT --log=stdout > /dev/null &
         NGROK_PID=$!
-        sleep 3
+        echo $NGROK_PID > "$TELECLAUDE_HOME/.teleclaude.ngrok.pid"
+        sleep 2
 
         NGROK_URL=$(curl -s http://localhost:4040/api/tunnels 2>/dev/null | python3 -c "import sys, json; data = json.load(sys.stdin); tunnels = data.get('tunnels', []); print(tunnels[0]['public_url'] if tunnels else '')" 2>/dev/null || echo "")
 
@@ -106,15 +117,22 @@ cmd_start() {
     fi
 
     echo ""
-    echo "Attach from another terminal: teleclaude attach -s $session"
-    echo "  (use Ctrl+] to detach without stopping session)"
-    echo "Press Ctrl+C to stop server"
+    echo "Press Ctrl+] to detach (server keeps running)"
+    echo "Use 'teleclaude stop' to stop server"
     echo ""
+    sleep 1
 
-    # Handle shutdown
-    trap 'echo ""; echo "Shutting down..."; kill $SERVER_PID 2>/dev/null; [ -n "$NGROK_PID" ] && kill $NGROK_PID 2>/dev/null; rm -f "$TELECLAUDE_HOME/.teleclaude.pid" "$TELECLAUDE_HOME/.teleclaude.url"; exit 0' INT TERM
+    # Automatically attach to the session
+    python -m server.attach --port $PORT --session "$session"
 
-    wait $SERVER_PID
+    # After detach, show status
+    echo ""
+    echo "Detached from session '$session'"
+    echo "Server is still running in background"
+    echo ""
+    echo "  Reattach:  teleclaude attach -s $session"
+    echo "  Stop:      teleclaude stop"
+    echo "  Status:    teleclaude status"
 }
 
 cmd_new() {
@@ -202,6 +220,13 @@ cmd_sessions() {
 
     echo "TeleClaude Sessions"
     echo "==================="
+
+    # Get ngrok URL if available
+    local ngrok_url=""
+    if [ -f "$TELECLAUDE_HOME/.teleclaude.url" ]; then
+        ngrok_url=$(cat "$TELECLAUDE_HOME/.teleclaude.url")
+    fi
+
     curl -s "http://localhost:$PORT/api/sessions" | python3 -c "
 import sys, json
 data = json.load(sys.stdin)
@@ -225,6 +250,11 @@ else:
     echo ""
     echo "* = current session"
     echo ""
+    echo "Local:  http://localhost:$PORT"
+    if [ -n "$ngrok_url" ]; then
+        echo "Remote: $ngrok_url"
+    fi
+    echo ""
     echo "Attach to a session: teleclaude attach -s <session_name>"
 }
 
@@ -235,6 +265,12 @@ cmd_stop() {
         PID=$(cat "$TELECLAUDE_HOME/.teleclaude.pid")
         kill $PID 2>/dev/null && echo "Server stopped"
         rm -f "$TELECLAUDE_HOME/.teleclaude.pid"
+    fi
+
+    if [ -f "$TELECLAUDE_HOME/.teleclaude.ngrok.pid" ]; then
+        PID=$(cat "$TELECLAUDE_HOME/.teleclaude.ngrok.pid")
+        kill $PID 2>/dev/null && echo "ngrok stopped"
+        rm -f "$TELECLAUDE_HOME/.teleclaude.ngrok.pid"
     fi
 
     pkill -f "uvicorn server.main:app.*--port $PORT" 2>/dev/null

@@ -7,11 +7,15 @@ import asyncio
 import fcntl
 import os
 import pty
+import re
 import select
 import signal
 import struct
 import termios
 import threading
+import time
+import urllib.request
+import urllib.error
 from typing import Callable, Optional
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -47,6 +51,14 @@ class PTYSession:
         self.running = False
         self.read_thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+
+        # Notification settings
+        self.ntfy_topic: Optional[str] = None
+        self._notification_buffer = b""
+        self._last_output_time = 0
+        self._notification_timer: Optional[threading.Timer] = None
+        self._last_notification_time = 0
+        self._notification_cooldown = 3  # seconds between notifications
 
     def start(self) -> bool:
         """Start the PTY session with Claude Code."""
@@ -149,6 +161,101 @@ class PTYSession:
                     client.send_callback(data)
                 except Exception as e:
                     print(f"Failed to send to client {client.id}: {e}")
+
+        # Handle notifications
+        self._handle_notification_output(data)
+
+    def _handle_notification_output(self, data: bytes):
+        """Track output and send notifications when Claude is waiting."""
+        if not self.ntfy_topic:
+            return
+
+        self._notification_buffer += data
+        # Keep only last 2KB
+        if len(self._notification_buffer) > 2048:
+            self._notification_buffer = self._notification_buffer[-2048:]
+
+        self._last_output_time = time.time()
+
+        # Cancel existing timer
+        if self._notification_timer:
+            self._notification_timer.cancel()
+
+        # Set timer to check after 2 seconds of idle
+        self._notification_timer = threading.Timer(2.0, self._check_and_notify)
+        self._notification_timer.daemon = True
+        self._notification_timer.start()
+
+    def _check_and_notify(self):
+        """Send notification when Claude finishes outputting."""
+        if not self.ntfy_topic:
+            return
+
+        # Check cooldown
+        now = time.time()
+        if now - self._last_notification_time < self._notification_cooldown:
+            self._notification_buffer = b""
+            return
+
+        # Clean the output - remove ANSI escape codes
+        try:
+            text = self._notification_buffer.decode('utf-8', errors='ignore')
+        except:
+            self._notification_buffer = b""
+            return
+
+        # Remove ANSI codes
+        clean_text = re.sub(r'\x1b\[[0-9;]*[a-zA-Z]', '', text)
+        clean_text = re.sub(r'\r', '', clean_text)
+        clean_text = re.sub(r'\n+', ' ', clean_text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+
+        if len(clean_text) < 10:
+            self._notification_buffer = b""
+            return
+
+        # Get the last meaningful part of Claude's output
+        message = clean_text[-300:]  # Last 300 chars
+
+        # Try to get the last sentence or question
+        sentence_match = re.search(r'[^.!?]*[.!?]\s*$', message)
+        if sentence_match:
+            message = sentence_match.group(0).strip()
+
+        if len(message) > 200:
+            message = '...' + message[-200:]
+
+        if len(message) > 10:
+            self._send_notification(message)
+            self._last_notification_time = now
+
+        self._notification_buffer = b""
+
+    def _send_notification(self, message: str):
+        """Send notification via ntfy.sh."""
+        if not self.ntfy_topic or not message:
+            return
+
+        try:
+            url = f"https://ntfy.sh/{self.ntfy_topic}"
+            data = message.encode('utf-8')
+            req = urllib.request.Request(
+                url,
+                data=data,
+                headers={'Title': 'TeleClaude'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=5) as response:
+                pass
+            print(f"[Notification] Sent: {message[:50]}...")
+        except Exception as e:
+            print(f"[Notification] Failed to send: {e}")
+
+    def set_ntfy_topic(self, topic: str):
+        """Set the ntfy.sh topic for notifications."""
+        self.ntfy_topic = topic if topic else None
+        if topic:
+            print(f"[Notification] Enabled for topic: {topic}")
 
     def write(self, data: bytes) -> bool:
         """Write input to the PTY (from any client)."""

@@ -116,6 +116,42 @@ async def delete_session(session_id: str):
     return {"status": "deleted", "session_id": session_id}
 
 
+@app.post("/api/notifications/ntfy")
+async def set_ntfy_topic(topic: str = Query(default=""), session_id: str = Query(default=None)):
+    """Set ntfy.sh topic for push notifications."""
+    sid = session_id or SESSION_NAME
+    session = session_manager.get_session(sid)
+    if not session:
+        session = session_manager.get_default_session()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="No active session")
+
+    session.set_ntfy_topic(topic if topic else None)
+    return {
+        "status": "ok",
+        "session_id": sid,
+        "ntfy_topic": topic if topic else None,
+        "enabled": bool(topic)
+    }
+
+
+@app.get("/api/notifications/ntfy")
+async def get_ntfy_topic(session_id: str = Query(default=None)):
+    """Get current ntfy.sh topic."""
+    sid = session_id or SESSION_NAME
+    session = session_manager.get_session(sid)
+    if not session:
+        session = session_manager.get_default_session()
+
+    topic = session.ntfy_topic if session else None
+    return {
+        "session_id": sid,
+        "ntfy_topic": topic,
+        "enabled": bool(topic)
+    }
+
+
 @app.post("/api/session/restart")
 async def restart_session(session_id: str = Query(default=None)):
     """Restart a Claude Code session."""

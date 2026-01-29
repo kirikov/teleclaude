@@ -21,30 +21,36 @@ Multiple clients (terminal + webapp) can connect to the same Claude Code session
 # Install globally (one time)
 ln -sf /path/to/teleclaude/teleclaude /usr/local/bin/teleclaude
 
-# Start TeleClaude in any directory
+# Start TeleClaude - launches server and attaches to Claude Code
 teleclaude start
 
 # Start with Claude args (e.g., resume last conversation)
 teleclaude start -- --resume
 
-# Create additional sessions
+# Detach with Ctrl+] (server keeps running in background)
+# Reattach anytime:
+teleclaude attach
+
+# Create additional sessions on running server
 teleclaude new -s myproject ~/myproject
 teleclaude new -s api ~/api -- --resume
 
 # List sessions
 teleclaude sessions
 
-# Attach from another terminal
-teleclaude attach
+# Attach to specific session
 teleclaude attach -s myproject
+
+# Stop the server
+teleclaude stop
 ```
 
 ## CLI Commands
 
 | Command | Description |
 |---------|-------------|
-| `teleclaude start [dir]` | Start server with Claude Code |
-| `teleclaude start -- --resume` | Start and resume last conversation |
+| `teleclaude start [dir]` | Start server and attach to Claude Code |
+| `teleclaude start -- --resume` | Start with --resume flag |
 | `teleclaude new -s NAME [dir]` | Create new session on running server |
 | `teleclaude attach` | Attach to session from terminal |
 | `teleclaude attach -s NAME` | Attach to specific session |
@@ -52,6 +58,8 @@ teleclaude attach -s myproject
 | `teleclaude status` | Show server status |
 | `teleclaude url` | Show ngrok URL |
 | `teleclaude stop` | Stop the server |
+
+**Detach:** Press `Ctrl+]` to detach without stopping the session or server.
 
 ### Options
 

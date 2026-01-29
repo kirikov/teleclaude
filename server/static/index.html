@@ -568,6 +568,7 @@
                 sendResize();
                 term.focus();
                 loadSessions();
+                loadNtfySettings();
             };
 
             ws.onclose = () => {
@@ -628,23 +629,43 @@
                 /select.*:/i,                // Selection prompt
                 /choose.*:/i,                // Choose prompt
                 /enter.*:/i,                 // Enter prompt
-                /\>\s*$/,                    // Prompt character
             ];
 
+            // Clean the output - remove ANSI escape codes
+            const cleanOutput = outputBuffer
+                .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '') // Remove ANSI codes
+                .replace(/\r/g, '')                      // Remove carriage returns
+                .replace(/\n+/g, ' ')                    // Replace newlines with space
+                .replace(/\s+/g, ' ')                    // Collapse whitespace
+                .trim();
+
+            // Get last 300 chars of clean output
+            const recentOutput = cleanOutput.slice(-300);
+
             // Check if output suggests Claude is waiting
-            const recentOutput = outputBuffer.slice(-500); // Last 500 chars
             const isWaiting = waitingPatterns.some(p => p.test(recentOutput));
 
-            if (isWaiting || outputBuffer.length > 100) {
-                // Determine notification message
-                let message = 'Claude needs your attention';
-                if (/\?\s*$/.test(recentOutput)) {
-                    message = 'Claude is asking a question';
-                } else if (/\[Y\/n\]/i.test(recentOutput) || /\(y\/n\)/i.test(recentOutput)) {
-                    message = 'Claude needs confirmation';
+            if (isWaiting || cleanOutput.length > 50) {
+                // Extract the relevant part (last sentence or question)
+                let message = recentOutput;
+
+                // Try to get just the last question or prompt
+                const questionMatch = recentOutput.match(/[^.!?\n]*\?[^?]*$/);
+                if (questionMatch) {
+                    message = questionMatch[0].trim();
+                } else {
+                    // Get last 150 chars
+                    message = recentOutput.slice(-150).trim();
                 }
 
-                sendNotification(message);
+                // Truncate if too long
+                if (message.length > 200) {
+                    message = message.slice(-200) + '...';
+                }
+
+                if (message.length > 10) {
+                    sendNotification(message);
+                }
             }
 
             outputBuffer = '';
@@ -717,13 +738,54 @@
             }
         }
 
-        function setupNtfy() {
+        async function loadNtfySettings() {
+            try {
+                const res = await fetch(`/api/notifications/ntfy?session_id=${currentSession}`);
+                const data = await res.json();
+                ntfyTopic = data.ntfy_topic || '';
+                updateNtfyButton();
+            } catch (e) {
+                console.error('Failed to load ntfy settings:', e);
+            }
+        }
+
+        function updateNtfyButton() {
+            const btn = document.querySelector('button[onclick="setupNtfy()"]');
+            if (btn) {
+                btn.textContent = ntfyTopic ? '📱✓' : '📱';
+                btn.title = ntfyTopic ? `ntfy: ${ntfyTopic}` : 'Setup push notifications';
+            }
+        }
+
+        async function setupNtfy() {
+            // Get current topic from server
+            try {
+                const res = await fetch(`/api/notifications/ntfy?session_id=${currentSession}`);
+                const data = await res.json();
+                ntfyTopic = data.ntfy_topic || '';
+            } catch (e) {
+                console.error('Failed to get ntfy topic:', e);
+            }
+
             const topic = prompt('Enter ntfy.sh topic for push notifications (leave empty to disable):', ntfyTopic);
             if (topic !== null) {
-                ntfyTopic = topic;
-                localStorage.setItem('ntfyTopic', topic);
-                if (topic) {
-                    alert(`ntfy.sh notifications enabled!\n\nSubscribe on your phone:\nhttps://ntfy.sh/${topic}`);
+                try {
+                    const res = await fetch(`/api/notifications/ntfy?topic=${encodeURIComponent(topic)}&session_id=${currentSession}`, {
+                        method: 'POST'
+                    });
+                    const data = await res.json();
+                    ntfyTopic = data.ntfy_topic || '';
+                    localStorage.setItem('ntfyTopic', ntfyTopic);
+                    updateNtfyButton();
+
+                    if (topic) {
+                        alert(`Server-side notifications enabled!\n\nSubscribe on your phone:\nhttps://ntfy.sh/${topic}\n\nYou'll get notifications even when browser is closed.`);
+                    } else {
+                        alert('Notifications disabled.');
+                    }
+                } catch (e) {
+                    console.error('Failed to set ntfy topic:', e);
+                    alert('Failed to configure notifications. Check console for details.');
                 }
             }
         }
