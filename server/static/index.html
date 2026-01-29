@@ -679,6 +679,68 @@
         .copy-menu-overlay.visible {
             display: block;
         }
+
+        /* Text view modal for mobile selection */
+        .text-view-modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: var(--bg-primary);
+            z-index: 2000;
+            display: none;
+            flex-direction: column;
+        }
+
+        .text-view-modal.visible {
+            display: flex;
+        }
+
+        .text-view-header {
+            background: var(--bg-secondary);
+            padding: 0.75rem 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border);
+            flex-shrink: 0;
+        }
+
+        .text-view-header h3 {
+            margin: 0;
+            font-size: 1rem;
+            color: var(--text-primary);
+        }
+
+        .text-view-header button {
+            background: var(--accent);
+            color: white;
+            border: none;
+            padding: 0.5rem 1rem;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .text-view-content {
+            flex: 1;
+            overflow: auto;
+            padding: 1rem;
+            -webkit-overflow-scrolling: touch;
+        }
+
+        .text-view-content pre {
+            margin: 0;
+            font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            line-height: 1.4;
+            color: var(--text-primary);
+            white-space: pre-wrap;
+            word-break: break-all;
+            -webkit-user-select: text;
+            user-select: text;
+        }
     </style>
 </head>
 <body>
@@ -769,7 +831,18 @@
     <div class="copy-menu" id="copyMenu">
         <button onclick="copyLastOutput()">📄 Copy last output</button>
         <button onclick="copyAllBuffer()">📑 Copy all</button>
-        <button onclick="copySelection()">✂️ Copy selection</button>
+        <button onclick="openTextView()">📝 View as text (select)</button>
+    </div>
+
+    <!-- Text view modal for native selection -->
+    <div class="text-view-modal" id="textViewModal">
+        <div class="text-view-header">
+            <h3>Terminal Output</h3>
+            <button onclick="closeTextView()">Done</button>
+        </div>
+        <div class="text-view-content">
+            <pre id="textViewContent"></pre>
+        </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.min.js"></script>
@@ -1331,19 +1404,29 @@
             return term;
         }
 
-        // Copy selected text to clipboard
-        async function copySelection() {
+        // Open text view modal for native selection
+        function openTextView() {
             hideCopyMenu();
             const activeTerm = getActiveTerm();
             if (!activeTerm) return;
 
-            const selectedText = activeTerm.getSelection();
-            if (!selectedText) {
-                showToast('No text selected');
+            activeTerm.selectAll();
+            const allText = activeTerm.getSelection();
+            activeTerm.clearSelection();
+
+            if (!allText) {
+                showToast('Nothing to show');
                 return;
             }
 
-            await copyToClipboard(selectedText);
+            document.getElementById('textViewContent').textContent = allText;
+            document.getElementById('textViewModal').classList.add('visible');
+        }
+
+        // Close text view modal
+        function closeTextView() {
+            document.getElementById('textViewModal').classList.remove('visible');
+            document.getElementById('textViewContent').textContent = '';
         }
 
         // Copy last output (visible portion)
